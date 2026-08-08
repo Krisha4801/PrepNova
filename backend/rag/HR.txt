@@ -1,0 +1,7 @@
+[tcs][hr][beginner] What is recruitment? | Hiring employees.
+
+[infosys][hr][intermediate] What is onboarding? | New employee training.
+
+[accenture][hr][advanced] What is talent retention? | Keeping good employees.
+
+[google][hr][advanced] What is DEI? | Diversity, Equity and Inclusion.

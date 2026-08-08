@@ -1,0 +1,7 @@
+[google][manager][beginner] What is leadership? | Guiding a team.
+
+[amazon][manager][intermediate] How do you handle conflict? | By communication and mediation.
+
+[meta][manager][advanced] What is OKR? | Objectives and key results.
+
+[microsoft][manager][advanced] How do you scale teams? | Structure and delegation.

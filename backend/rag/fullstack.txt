@@ -1,0 +1,7 @@
+[amazon][fullstack][beginner] What is backend? | Server-side logic.
+
+[google][fullstack][intermediate] What is JWT? | Token-based authentication.
+
+[meta][fullstack][advanced] What is microservices? | Independent deployable services.
+
+[netflix][fullstack][advanced] How do you scale web apps? | Load balancing, caching, CDN.

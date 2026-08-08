@@ -1,0 +1,7 @@
+[google][ai][beginner] What is machine learning? | Teaching machines from data.
+
+[openai][ai][intermediate] What is fine-tuning? | Training a model on custom data.
+
+[meta][ai][advanced] What is reinforcement learning? | Learning from rewards.
+
+[microsoft][ai][advanced] What is vector embedding? | Numeric representation of text meaning.

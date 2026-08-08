@@ -1,0 +1,7 @@
+[linkedin][data][beginner] What is a database? | A structured data store.
+
+[google][data][intermediate] What is ETL? | Extract, Transform, Load.
+
+[amazon][data][advanced] What is data lake? | Raw storage for big data.
+
+[meta][data][advanced] What is stream processing? | Handling live data in real time.

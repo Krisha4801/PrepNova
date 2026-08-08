@@ -1,0 +1,7 @@
+[aws][cloud][beginner] What is cloud computing? | Using remote servers.
+
+[google][cloud][intermediate] What is container? | Packaged app with dependencies.
+
+[azure][cloud][advanced] What is Kubernetes? | Container orchestration.
+
+[aws][cloud][advanced] What is autoscaling? | Dynamic server resizing.

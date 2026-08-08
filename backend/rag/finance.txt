@@ -1,0 +1,7 @@
+[deloitte][finance][beginner] What is revenue? | Income from sales.
+
+[goldman][finance][intermediate] What is EBITDA? | Profit before interest, tax, depreciation.
+
+[jpmorgan][finance][advanced] What is NPV? | Net present value of cash flows.
+
+[pwc][finance][advanced] What is financial risk? | Potential monetary loss.

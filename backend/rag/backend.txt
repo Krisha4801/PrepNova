@@ -1,0 +1,7 @@
+[google][backend][beginner] What is an API? | A way for software systems to communicate.
+
+[amazon][backend][intermediate] What is REST vs GraphQL? | REST uses endpoints, GraphQL allows flexible queries.
+
+[meta][backend][advanced] How do you handle database sharding? | By splitting data across multiple servers.
+
+[netflix][backend][advanced] What is circuit breaker pattern? | It prevents cascading failures.

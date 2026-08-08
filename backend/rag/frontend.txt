@@ -1,0 +1,55 @@
+[google][frontend][beginner] What is semantic HTML? | Tags that convey meaning (e.g., <article>, <nav>) rather than just presentation.
+[amazon][frontend][beginner] What are data attributes? | Custom attributes (data-*) used to store private data for JavaScript.
+[microsoft][frontend][beginner] What is the difference between <script>, <script async>, and <script defer>? | Normal blocks parsing, async downloads in parallel and executes immediately, defer executes after parsing.
+[meta][frontend][intermediate] What is the Shadow DOM? | A scoped JS/CSS subtree for encapsulation, commonly used in Web Components.
+[netflix][frontend][intermediate] What is a Content Security Policy (CSP)? | A security layer that helps detect and mitigate Cross-Site Scripting (XSS).
+[uber][frontend][beginner] What is the purpose of the Alt attribute? | Provides text descriptions for images for accessibility and SEO.
+[google][frontend][intermediate] What are Web Components? | A suite of technologies (Custom Elements, Shadow DOM, Templates) for reusable widgets.
+[amazon][frontend][advanced] What is Progressive Enhancement? | Building a basic functional version first, then adding features for modern browsers.
+[microsoft][frontend][beginner] What is a DOCTYPE? | An instruction to the browser about what version of HTML the page is written in.
+[meta][frontend][intermediate] Explain the difference between localStorage and sessionStorage. | Local stays after browser close; session clears when the tab is closed.
+[google][frontend][beginner] What is the Box Model? | The structure of an element consisting of content, padding, border, and margin.
+[meta][frontend][beginner] Difference between 'display: none' and 'visibility: hidden'? | 'none' removes the element from flow; 'hidden' keeps the space but hides content.
+[amazon][frontend][intermediate] What is CSS Specificity? | The rule-weighting system (ID > Class > Element) that determines which styles apply.
+[microsoft][frontend][intermediate] What are CSS Variables (Custom Properties)? | Entities defined by authors that contain specific values to be reused throughout a document.
+[netflix][frontend][advanced] What is a BFC (Block Formatting Context)? | A part of the visual CSS rendering where boxes are laid out and float interaction is isolated.
+[google][frontend][intermediate] Flexbox vs Grid? | Flexbox is 1D (row or column); Grid is 2D (rows and columns).
+[apple][frontend][intermediate] What is the 'z-index' and how does it work? | Controls the vertical stacking order of elements with a position other than static.
+[uber][frontend][beginner] What are pseudo-classes? | Keywords added to selectors (like :hover) that specify a special state.
+[amazon][frontend][advanced] What is Critical CSS? | Extracting and inlining the CSS required for the "above the fold" content to speed up rendering.
+[meta][frontend][intermediate] What is the difference between em and rem units? | 'em' is relative to parent font size; 'rem' is relative to the root font size.
+[google][frontend][intermediate] What is hoisting? | JS moving declarations to the top of their scope during compilation.
+[amazon][frontend][intermediate] What is a Closure? | A function that remembers the variables from its outer scope even after that scope has closed
+[meta][frontend][beginner] Difference between '==' and '==='? | '==' checks value with type coercion; '===' checks value and type.
+[microsoft][frontend][intermediate] What is Event Delegation? | Using a single event listener on a parent to manage events for multiple children.
+[netflix][frontend][advanced] What is the Event Loop? | The mechanism that handles asynchronous callbacks by pushing them to the call stack.
+[google][frontend][advanced] What are Prototypes in JS? | The mechanism by which JS objects inherit features from one another.
+[apple][frontend][intermediate] Difference between 'let', 'const', and 'var'? | var is function-scoped; let/const are block-scoped; const cannot be reassigned.
+[uber][frontend][advanced] What is a Promise? | An object representing the eventual completion (or failure) of an asynchronous operation.
+[amazon][frontend][intermediate] What is 'this' keyword? | Refers to the object that is executing the current piece of code.
+[google][frontend][advanced] What is Currying? | Transforming a function that takes multiple arguments into a sequence of functions that take one argument.
+[meta][frontend][intermediate] What is Debouncing? | Limiting the rate at which a function gets invoked (e.g., on window resize).
+[microsoft][frontend][intermediate] What is Throttling? | Ensuring a function is called at most once in a specified time period.
+[netflix][frontend][advanced] What are Generators? | Functions that can be exited and later re-entered, maintaining their context (using yield).
+[meta][frontend][beginner] What is JSX? | A syntax extension for JS that looks like HTML and describes UI structure.
+[google][frontend][intermediate] What is the Virtual DOM? | A lightweight copy of the real DOM used to optimize updates via diffing.
+[amazon][frontend][intermediate] What is the difference between Props and State? | Props are passed from parent (read-only); State is managed within the component.
+[meta][frontend][advanced] What is Reconciliation? | The algorithm React uses to diff one tree with another to determine which parts need to be changed.
+[microsoft][frontend][intermediate] What are React Hooks? | Functions that let you "hook into" React state and lifecycle features from function components.
+[netflix][frontend][advanced] Difference between useMemo and useCallback? | useMemo memoizes a value; useCallback memoizes a function.
+[meta][frontend][intermediate] What is the Context API? | A way to share values (like themes or user data) between components without prop drilling.
+[uber][frontend][advanced] What is HOC (Higher-Order Component)? | A pattern where a function takes a component and returns a new enhanced component.
+[amazon][frontend][intermediate] What is the purpose of 'key' prop in lists? | Helps React identify which items have changed, been added, or removed for efficient rendering.
+[google][frontend][advanced] What is React.lazy? | A function that lets you render a dynamic import as a regular component (Code Splitting).
+[google][frontend][advanced] What are Core Web Vitals? | Metrics (LCP, FID, CLS) used by Google to measure page load speed and UX.
+[amazon][frontend][advanced] What is SSR (Server-Side Rendering)? | Rendering the initial HTML on the server before sending it to the client.
+[meta][frontend][advanced] What is Hydration? | The process of attaching JS event listeners to server-rendered HTML.
+[microsoft][frontend][intermediate] What is a PWA (Progressive Web App)? | A web app that uses service workers and manifests to behave like a native mobile app.
+[netflix][frontend][advanced] What is Tree Shaking? | A dead-code elimination technique used during the build process (Webpack/Rollup).
+[uber][frontend][intermediate] What is a CDN? | A geographically distributed group of servers which work together to provide fast delivery of internet content.
+[google][frontend][advanced] What is the Critical Rendering Path? | The sequence of steps the browser takes to convert HTML, CSS, and JS into pixels.
+[amazon][frontend][advanced] What is Micro-Frontend architecture? | Breaking a frontend app into small, independent, and deployable pieces.
+[microsoft][frontend][intermediate] What is "Reflow" and "Repaint"? | Reflow is calculating layout; Repaint is drawing pixels to the screen.
+[netflix][frontend][advanced] What is the "Brotli" compression? | A generic-purpose lossless compression algorithm that offers better compression than Gzip.
+[google][frontend][intermediate] What is an API Gateway? | A server that acts as an API front-end, receiving requests and routing them to back-end services.
+[meta][frontend][beginner] What is an SPA? | Single Page Application that loads one HTML page and dynamically updates as the user interacts.
