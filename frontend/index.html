@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PrepNova Mock Interview</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="alternate icon" href="/favicon.ico">
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+  <!-- React App Mount Point -->
+  <div id="react-root"></div>
+
+  <!-- Vanilla JS App (Hidden initially) -->
+  <main id="vanilla-app" class="app" hidden>
+    <header class="topbar">
+      <div class="brand">
+        <p class="eyebrow">Mock interview studio</p>
+        <h1>Interview Simulator</h1>
+      </div>
+
+      <div class="top-actions">
+        <div id="status" class="status" aria-live="polite">
+          <span>Ready</span>
+        </div>
+        <button id="newSessionButton" class="button secondary" type="button" hidden>New Session</button>
+      </div>
+    </header>
+
+    <section class="workspace">
+      <!-- Old setup form, kept for compatibility if needed, but hidden -->
+      <form id="startForm" class="setup-panel" aria-label="Interview setup" hidden>
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Session setup</p>
+            <h2>Candidate Profile</h2>
+          </div>
+        </div>
+        <div class="form-grid">
+          <label>Name<input id="name" autocomplete="name" placeholder="Your name"></label>
+          <label>Role
+            <select id="role" required>
+              <option value="Frontend Developer">Frontend Developer</option>
+            </select>
+          </label>
+          <label>Difficulty
+            <select id="level">
+              <option value="beginner">Beginner</option>
+            </select>
+          </label>
+        </div>
+        <button id="startButton" class="button primary" type="submit">Start Interview</button>
+      </form>
+
+      <section id="interviewShell" class="interview-shell" aria-label="Interview session" hidden>
+        <div class="session-bar">
+          <div>
+            <p class="eyebrow">Live session</p>
+            <h2 id="sessionTitle">Interview</h2>
+          </div>
+          <div class="progress-panel" aria-label="Interview progress">
+            <div class="progress-copy">
+              <span id="progressText">Question 1 of 6</span>
+              <span id="levelText">Beginner</span>
+            </div>
+            <div class="progress-track" aria-hidden="true">
+              <span id="progressFill"></span>
+            </div>
+          </div>
+        </div>
+        <section id="chat" class="chat" aria-live="polite" aria-label="Interview conversation"></section>
+        <form id="inputArea" class="input-area" aria-label="Answer input">
+          <textarea id="answerInput" rows="4" placeholder="Type your answer..."></textarea>
+          <div class="composer-actions">
+            <button id="skipButton" class="button secondary" type="button">Skip</button>
+            <button id="sendButton" class="button primary" type="submit">Submit</button>
+          </div>
+        </form>
+      </section>
+    </section>
+  </main>
+
+  <!-- Load React JS (which imports main.js) -->
+  <script type="module" src="/src/main.jsx"></script>
+</body>
+</html>
