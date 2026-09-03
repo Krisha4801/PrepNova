@@ -1,0 +1,69 @@
+@import "tailwindcss";
+@config "../tailwind.config.js";
+
+@layer base {
+  /* Hide scrollbars globally across all containers, pages, and browsers */
+  html,
+  body,
+  * {
+    scrollbar-width: none !important;        /* Firefox */
+    -ms-overflow-style: none !important;     /* IE/Edge */
+  }
+
+  *::-webkit-scrollbar,
+  html::-webkit-scrollbar,
+  body::-webkit-scrollbar {
+    width: 0 !important;
+    height: 0 !important;
+    display: none !important;
+  }
+
+  html,
+  body {
+    overflow-y: auto;
+    overflow-x: hidden;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-body font-sans;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    @apply text-heading;
+  }
+}
+
+@layer utilities {
+  .custom-scrollbar {
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
+  }
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 0 !important;
+    height: 0 !important;
+    display: none !important;
+  }
+
+  /* Single-surface Focus Skills search bar */
+  .search-container:focus-within {
+    border-color: #2563EB !important;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12) !important;
+  }
+
+  .search-input,
+  .search-category-select {
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+  }
+
+  .search-input:focus,
+  .search-input:focus-visible,
+  .search-category-select:focus,
+  .search-category-select:focus-visible {
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+  }
+}
