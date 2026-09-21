@@ -1,0 +1,433 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{amssymb}
+\usepackage{hyperref}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+
+\definecolor{statusgreen}{HTML}{2E7D32}
+\definecolor{statusyellow}{HTML}{F9A825}
+\definecolor{statusred}{HTML}{C62828}
+\definecolor{lightgray}{HTML}{F3F4F6}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=black,
+    urlcolor=blue
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{Bi-Weekly Status Report}
+\rhead{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\titleformat{\section}
+  {\large\bfseries}
+  {}
+  {0pt}
+  {}
+  [\vspace{2pt}\titlerule]
+
+\setlist[itemize]{leftmargin=1.5em, itemsep=2pt, topsep=3pt}
+
+\newcommand{\field}[2]{\textbf{#1:} #2\par}
+
+\begin{document}
+
+\begin{center}
+    {\LARGE\bfseries Bi-Weekly Status Report}\\[10pt]
+\end{center}
+
+\field{Project Name}{Name of Project}
+\field{Report Period}{[Start Date] -- [End Date]}
+\field{Prepared By}{Name of Team Member}
+\field{Date Submitted}{dd/mm/yyyy}
+
+\vspace{8pt}
+
+\section{Project Status Summary\footnote{For details on indicators and status levels, see last page.}}
+
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{>{\bfseries}p{0.30\textwidth} p{0.62\textwidth}}
+Sprint/Milestone & e.g., Sprint 12 / Milestone 3 \\
+\% Complete (overall) & e.g., 65\% \\
+\end{tabular}
+
+\begin{table}[htbp]
+\centering
+\label{tab:project-health-dashboard}
+\renewcommand{\arraystretch}{1.4}
+
+\begin{tabular}{>{\raggedright\arraybackslash}p{3.3cm}
+                >{\centering\arraybackslash}p{2.4cm}
+                >{\centering\arraybackslash}p{2.4cm}
+                >{\centering\arraybackslash}p{1.7cm}
+                >{\centering\arraybackslash}p{3.2cm}}
+\toprule
+\textbf{Indicator} &
+\textbf{Current} &
+\textbf{Previous} &
+\textbf{Trend} &
+\textbf{Status} \\
+\midrule
+
+Overall Project &
+-- &
+-- &
+$\uparrow$ / $\rightarrow$ / $\downarrow$ &
+On Track / Needs Attention / At Risk / Blocked\\
+
+Schedule &
+-- &
+-- &
+$\uparrow$ / $\rightarrow$ / $\downarrow$ &
+On Track / Needs Attention / At Risk / Blocked\\
+
+Scope &
+-- &
+-- &
+$\uparrow$ / $\rightarrow$ / $\downarrow$ &
+On Track / Needs Attention / At Risk / Blocked\\
+
+Quality &
+-- &
+-- &
+$\uparrow$ / $\rightarrow$ / $\downarrow$ &
+On Track / Needs Attention / At Risk / Blocked\\
+
+Team Contribution &
+-- &
+-- &
+$\uparrow$ / $\rightarrow$ / $\downarrow$ &
+On Track / Needs Attention / At Risk / Blocked\\
+
+Dependencies &
+-- &
+-- &
+$\uparrow$ / $\rightarrow$ / $\downarrow$ &
+On Track / Needs Attention / At Risk / Blocked\\
+
+\bottomrule
+\end{tabular}
+\end{table}
+
+\vspace{8pt}
+\textbf{Summary Notes:}
+
+A short paragraph (3--5 sentences) covering what happened this week, overall momentum, and anything the reader needs to know before diving into details.
+
+\section{Key Accomplishments in Two Weeks}
+
+\begin{itemize}
+    \item Accomplishment 1 (link to ticket/pull request (PR) if applicable)
+    \item Accomplishment 2
+    \item Accomplishment 3
+\end{itemize}
+
+\section{Planned vs. Actual}
+
+\begin{tabular}{p{0.16\textwidth} p{0.17\textwidth} p{0.17\textwidth} p{0.17\textwidth} p{0.22\textwidth}}
+\toprule
+\textbf{Task/} & \textbf{Planned} & \textbf{Current} & \textbf{Actual} & \textbf{Notes} \\
+ \textbf{Deliverable} & \textbf{Completion} & \textbf{Forecast} & \textbf{Status} & \\
+\midrule
+Task A & Aug 12 & --- & Done & --- \\
+Task B & Aug 14 & Aug 18 & In Progress & Delayed due to API dependency \\
+Task C & Aug 15 & Aug 20 & Not Started & Deprioritized, moved to next sprint \\
+% & & & & \\
+% & & & & \\
+% & & & & \\
+\bottomrule
+\end{tabular}
+
+\section{Project Risks, Issues, \& Dependency}
+
+\begin{tabular}{p{0.15\textwidth} p{0.25\textwidth} p{0.14\textwidth} p{0.14\textwidth} p{0.25\textwidth}}
+\toprule
+\textbf{Type (ID)} & \textbf{Description} & \textbf{Impact} & \textbf{Owner} & \textbf{Mitigation/Next Step} \\
+\midrule
+Risk (R-01) & e.g., Third-party API instability & High & Member Name & Escalated to vendor, fallback plan in progress \\
+Issue (I-03) & Login failing & High & Member Name & Debug OAuth\\
+Dependency (D-02) & DB credentials & Medium & Member Name & Escalate\\
+% & & & & \\
+% & & & & \\
+\bottomrule
+\end{tabular}
+
+
+\section{Project Decisions}
+
+\begin{table}[htbp]
+\centering
+\label{tab:project-decisions}
+\renewcommand{\arraystretch}{1.3}
+
+\begin{tabular}{>{\raggedright\arraybackslash}p{3.2cm}
+                >{\raggedright\arraybackslash}p{4.0cm}
+                >{\raggedright\arraybackslash}p{3.5cm}
+                >{\centering\arraybackslash}p{2.0cm}
+                >{\centering\arraybackslash}p{1.5cm}}
+\toprule
+\textbf{Decision} &
+\textbf{Rationale} &
+\textbf{Impact} &
+\textbf{Decided By} &
+\textbf{Date} \\
+\midrule
+
+MongoDB $\rightarrow$ PostgreSQL &
+Transaction requirements &
+Architecture change &
+Team &
+Aug.\ 15 \\
+
+Remove feature X &
+Schedule constraint &
+Scope reduction &
+Member Name &
+Aug.\ 15 \\
+
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Project Scope Changes}
+
+\begin{table}[htbp]
+\centering
+\label{tab:scope-changes}
+\renewcommand{\arraystretch}{1.25}
+
+\begin{tabular}{p{3.0cm} c p{3.2cm} c c}
+\toprule
+\textbf{Change} &
+\textbf{Action} &
+\textbf{Reason} &
+\textbf{Schedule Impact} &
+\textbf{Approved By} \\
+\midrule
+
+Payment gateway &
+Added &
+Client request &
++5 days &
+Faculty \\
+
+Chat module &
+Removed &
+Time constraint &
+$-4$ days &
+Faculty \\
+
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Upcoming Work (Next Two Week's Plan)}
+
+\begin{itemize}
+    \item Priority 1
+    \item Priority 2
+    \item Priority 3
+\end{itemize}
+
+\section{Team Member Contributions}
+
+\vspace{10pt}
+
+\hspace{0.58cm}\field{Name}{[Team Member 1]}
+\field{Role}{[e.g., Backend Developer]}
+
+\vspace{4pt}
+
+\begin{tabular}{>{\bfseries}p{0.30\textwidth} p{0.62\textwidth}}
+\toprule
+Tasks Completed & List with ticket IDs/PR \# links \\
+Tasks In Progress & List with \% complete or expected finish date \\
+Contribution Type & Development / Architecture / Testing / Documentation / DevOps / Research / Project Management / Presentation etc.\\
+Blockers & Anything preventing progress \\
+Hours/Capacity & e.g., 32/40 hrs logged \\
+Evidence & PR \# / Report / GitHub commit / Issue/ticket / Design document / UML diagram / Test report / API specification / Deployment / Demo / Research / Documentation contribution etc.\\
+\bottomrule
+\end{tabular}
+
+\vspace{10pt}
+
+\field{Name}{[Team Member 2]}
+\field{Role}{[e.g., Backend Developer]}
+
+\vspace{4pt}
+
+\begin{tabular}{>{\bfseries}p{0.30\textwidth} p{0.62\textwidth}}
+\toprule
+Tasks Completed & List with ticket IDs/PR \# links \\
+Tasks In Progress & List with \% complete or expected finish date \\
+Contribution Type & Development / Architecture / Testing / Documentation / DevOps / Research / Project Management / Presentation etc.\\
+Blockers & Anything preventing progress \\
+Hours/Capacity & e.g., 32/40 hrs logged \\
+Evidence & PR \# / Report / GitHub commit / Issue/ticket / Design document / UML diagram / Test report / API specification / Deployment / Demo / Research / Documentation contribution etc.\\
+\bottomrule
+\end{tabular}
+
+\vspace{10pt}
+
+\field{Name}{[Team Member 3]}
+\field{Role}{[e.g., Backend Developer]}
+
+\vspace{4pt}
+
+\begin{tabular}{>{\bfseries}p{0.30\textwidth} p{0.62\textwidth}}
+\toprule
+Tasks Completed & List with ticket IDs/PR \# links \\
+Tasks In Progress & List with \% complete or expected finish date \\
+Contribution Type & Development / Architecture / Testing / Documentation / DevOps / Research / Project Management / Presentation etc.\\
+Blockers & Anything preventing progress \\
+Hours/Capacity & e.g., 32/40 hrs logged \\
+Evidence & PR \# / Report / GitHub commit / Issue/ticket / Design document / UML diagram / Test report / API specification / Deployment / Demo / Research / Documentation contribution etc.\\
+\bottomrule
+\end{tabular}
+
+\vspace{10pt}
+
+\field{Name}{[Team Member 4]}
+\field{Role}{[e.g., Backend Developer]}
+
+\vspace{4pt}
+
+\begin{tabular}{>{\bfseries}p{0.30\textwidth} p{0.62\textwidth}}
+\toprule
+Tasks Completed & List with ticket IDs/PR \# links \\
+Tasks In Progress & List with \% complete or expected finish date \\
+Contribution Type & Development / Architecture / Testing / Documentation / DevOps / Research / Project Management / Presentation etc.\\
+Blockers & Anything preventing progress \\
+Hours/Capacity & e.g., 32/40 hrs logged \\
+Evidence & PR \# / Report / GitHub commit / Issue/ticket / Design document / UML diagram / Test report / API specification / Deployment / Demo / Research / Documentation contribution etc.\\
+\bottomrule
+\end{tabular}
+
+\vspace{10pt}
+
+\field{Name}{[Team Member 5]}
+\field{Role}{[e.g., Backend Developer]}
+
+\vspace{4pt}
+
+\begin{tabular}{>{\bfseries}p{0.30\textwidth} p{0.62\textwidth}}
+\toprule
+Tasks Completed & List with ticket IDs/PR \# links \\
+Tasks In Progress & List with \% complete or expected finish date \\
+Contribution Type & Development / Architecture / Testing / Documentation / DevOps / Research / Project Management / Presentation etc.\\
+Blockers & Anything preventing progress \\
+Hours/Capacity & e.g., 32/40 hrs logged \\
+Evidence & PR \# / Report / GitHub commit / Issue/ticket / Design document / UML diagram / Test report / API specification / Deployment / Demo / Research / Documentation contribution etc.\\
+\bottomrule
+\end{tabular}
+
+\vspace{10pt}
+
+\field{Name}{[Team Member 6]}
+\field{Role}{[e.g., Backend Developer]}
+
+\vspace{4pt}
+
+\begin{tabular}{>{\bfseries}p{0.30\textwidth} p{0.62\textwidth}}
+\toprule
+Tasks Completed & List with ticket IDs/PR \# links \\
+Tasks In Progress & List with \% complete or expected finish date \\
+Contribution Type & Development / Architecture / Testing / Documentation / DevOps / Research / Project Management / Presentation etc.\\
+Blockers & Anything preventing progress \\
+Hours/Capacity & e.g., 32/40 hrs logged \\
+Evidence & PR \# / Report / GitHub commit / Issue/ticket / Design document / UML diagram / Test report / API specification / Deployment / Demo / Research / Documentation contribution etc.\\
+\bottomrule
+\end{tabular}
+
+\vspace{37pt}
+
+\field{Name}{[Team Member 7]}
+\field{Role}{[e.g., Backend Developer]}
+
+\vspace{4pt}
+
+\begin{tabular}{>{\bfseries}p{0.30\textwidth} p{0.62\textwidth}}
+\toprule
+Tasks Completed & List with ticket IDs/PR \# links \\
+Tasks In Progress & List with \% complete or expected finish date \\
+Contribution Type & Development / Architecture / Testing / Documentation / DevOps / Research / Project Management / Presentation etc.\\
+Blockers & Anything preventing progress \\
+Hours/Capacity & e.g., 32/40 hrs logged \\
+Evidence & PR \# / Report / GitHub commit / Issue/ticket / Design document / UML diagram / Test report / API specification / Deployment / Demo / Research / Documentation contribution etc.\\
+\bottomrule
+\end{tabular}
+
+\vspace{10pt}
+
+\field{Name}{[Team Member 8]}
+\field{Role}{[e.g., Backend Developer]}
+
+\vspace{4pt}
+
+\begin{tabular}{>{\bfseries}p{0.30\textwidth} p{0.62\textwidth}}
+\toprule
+Tasks Completed & List with ticket IDs/PR \# links \\
+Tasks In Progress & List with \% complete or expected finish date \\
+Contribution Type & Development / Architecture / Testing / Documentation / DevOps / Research / Project Management / Presentation etc.\\
+Blockers & Anything preventing progress \\
+Hours/Capacity & e.g., 32/40 hrs logged \\
+Evidence & PR \# / Report / GitHub commit / Issue/ticket / Design document / UML diagram / Test report / API specification / Deployment / Demo / Research / Documentation contribution etc.\\
+\bottomrule
+\end{tabular}
+
+\vspace{6pt}
+\noindent
+\textit{Tip:} If your team uses Jira, you can fill this section by pulling closed/in-progress tickets assigned to each person, rather than filling it manually.
+
+\pagebreak
+
+\section{Guidelines (for reference, not to be submitted in your status report):}
+
+\begin{itemize}
+    \item Section 1 summarizes the overall project status.
+    \item Sections 2--5 capture team-wide progress.
+    \item Section 6 is the per-person breakdown -- keep individual entries short (3--5 bullet points max) so the report does not balloon as your project progresses / team grows.
+    \item The status indicators at the top give stakeholders a one-glance read before they dig into details -- useful if this report goes to non-technical stakeholders too.
+    \item Six project status indicators have the following context:
+    \begin{itemize}
+        \item Overall Progress — \% of project scope completed
+        \item Schedule — \% of planned work completed
+        \item Scope — \% of approved requirements completed
+        \item Quality — test pass rate / critical defects
+        \item Team Contribution — \% of assigned deliverables completed
+        \item Dependencies — \% of critical dependencies resolved
+    \end{itemize}
+    \item Status levels:
+    \begin{itemize}
+        \item On Track — expected to meet current milestone
+        \item Needs Attention — issue exists but recovery is likely
+        \item At Risk — milestone/deliverable may be missed without intervention
+        \item Blocked — progress cannot continue without resolving a dependency
+    \end{itemize}
+    \item Contribution Type with examples (Add more types, if needed)
+    \begin{itemize}
+        \item Development —	Code, APIs, UI, database
+        \item Architecture — Architecture/design decisions
+        \item Testing — Test cases, automation, defect verification
+        \item Documentation — SRS, design docs, reports
+        \item DevOps — CI/CD, deployment, containers
+        \item Research — Literature review, technical investigation
+        \item Project Management — Planning, coordination
+        \item Presentation — Demo, presentation, client communication 
+    \end{itemize}
+
+\end{itemize}
+
+\end{document}
