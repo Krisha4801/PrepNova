@@ -1,0 +1,9 @@
+fastapi
+uvicorn 
+python-multipart
+pymupdf
+pytesseract 
+groq
+pydantic-settings
+langchain
+langchain-groq

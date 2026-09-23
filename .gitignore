@@ -8,6 +8,11 @@ backend/node_modules/
 !.env.example
 !backend/.env.example
 backend/.env
+.venv/
+venv/
+env/
+ENV/
+AIService/.venv/
 
 # Logs
 *.log
@@ -37,3 +42,5 @@ __pycache__/
 Thumbs.db
 .vscode/
 .idea/
+
+uploads/
