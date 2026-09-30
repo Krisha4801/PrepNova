@@ -7,3 +7,6 @@ groq
 pydantic-settings
 langchain
 langchain-groq
+chromadb
+sentence-transformers
+langchain-huggingface
