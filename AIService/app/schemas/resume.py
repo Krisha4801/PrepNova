@@ -42,7 +42,7 @@ class Project(BaseModel):
 
 
 class Resume(BaseModel):
-    candidate: CandidateInfo
+    candidate: CandidateInfo | None = Field(default_factory=CandidateInfo)
     summary: str | None = None
     education: list[Education] | None = Field(default_factory=list)
     experience: list[Experience] | None = Field(default_factory=list)

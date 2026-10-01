@@ -1,4 +1,4 @@
-# PrepNova AI Service
+ # PrepNova AI Service
 
 The **PrepNova AI Service** is a FastAPI-based microservice for the AI and RAG layer of **PrepNova — RAG-based Adaptive Mock Interview Platform**.
 

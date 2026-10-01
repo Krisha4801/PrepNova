@@ -21,9 +21,9 @@ class Responsibilities(BaseModel):
 
 
 class JobDescription(BaseModel):
-    job_info: JobInfo
-    requirements: Requirements
-    responsibilities: Responsibilities
+    job_info: Optional[JobInfo] = Field(default_factory=JobInfo)
+    requirements: Optional[Requirements] = Field(default_factory=Requirements)
+    responsibilities: Optional[Responsibilities] = Field(default_factory=Responsibilities)
     technologies: List[str] = Field(default_factory=list)
     soft_skills: List[str] = Field(default_factory=list)
     qualifications: List[str] = Field(default_factory=list)
