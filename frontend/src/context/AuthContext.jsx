@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { loginApi, registerApi, getMeApi, logoutApi, getStoredToken, getStoredUser, setAuthSession, clearAuthSession } from '../lib/api';
 
 const AuthContext = createContext();
 
@@ -8,83 +9,63 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Restore session automatically on page refresh
-    const storedUser = localStorage.getItem('prepNova_user');
-    const storedToken = localStorage.getItem('prepNova_token');
+    // Restore and verify session on initial load
+    async function initAuth() {
+      const storedToken = getStoredToken();
+      const storedUser = getStoredUser();
 
-    if (storedUser && storedToken) {
-      try {
-        const parsed = JSON.parse(storedUser);
-        if (parsed?.university === 'Indus University') {
-          parsed.university = 'DAU';
-          localStorage.setItem('prepNova_user', JSON.stringify(parsed));
+      if (storedToken) {
+        if (storedUser) {
+          setUser(storedUser);
+          setIsAuthenticated(true);
         }
-        setUser(parsed);
-        setIsAuthenticated(true);
-      } catch {
-        setUser(JSON.parse(storedUser));
-        setIsAuthenticated(true);
+
+        // Verify token with backend /api/auth/me
+        try {
+          const res = await getMeApi();
+          if (res.success && res.user) {
+            setUser(res.user);
+            setIsAuthenticated(true);
+            setAuthSession(storedToken, res.user);
+          }
+        } catch (err) {
+          console.warn("Session expired or invalid:", err.message);
+          // If token verification fails with 401, clear session
+          if (err.status === 401) {
+            clearAuthSession();
+            setUser(null);
+            setIsAuthenticated(false);
+          }
+        }
       }
+      setLoading(false);
     }
-    setLoading(false);
+
+    initAuth();
   }, []);
 
   const login = async (email, password) => {
-    // Mock authentication logic
-    return new Promise((resolve, reject) => {
-      setTimeout(() => {
-        if (email && password.length >= 6) {
-          const mockUser = {
-            name: email.split('@')[0],
-            email: email,
-            university: 'DAU',
-            course: 'B.Tech Computer Science',
-            preferredRole: 'Frontend Developer',
-            avatar: email[0].toUpperCase(),
-            joinedAt: new Date().toISOString(),
-          };
-          const token = 'mock_jwt_token_12345';
-
-          localStorage.setItem('prepNova_user', JSON.stringify(mockUser));
-          localStorage.setItem('prepNova_token', token);
-
-          setUser(mockUser);
-          setIsAuthenticated(true);
-          resolve(mockUser);
-        } else {
-          reject(new Error('Invalid email or password'));
-        }
-      }, 800);
-    });
+    const res = await loginApi(email, password);
+    if (res.success && res.user) {
+      setUser(res.user);
+      setIsAuthenticated(true);
+      return res.user;
+    }
+    throw new Error(res.error || 'Login failed');
   };
 
   const signup = async (userData) => {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        const newUser = {
-          name: userData.name,
-          email: userData.email,
-          university: userData.university || 'DAU',
-          course: userData.course || 'B.Tech Computer Science',
-          preferredRole: 'Frontend Developer',
-          avatar: userData.name.charAt(0).toUpperCase(),
-          joinedAt: new Date().toISOString(),
-        };
-        const token = 'mock_jwt_token_12345';
-
-        localStorage.setItem('prepNova_user', JSON.stringify(newUser));
-        localStorage.setItem('prepNova_token', token);
-
-        setUser(newUser);
-        setIsAuthenticated(true);
-        resolve(newUser);
-      }, 800);
-    });
+    const res = await registerApi(userData);
+    if (res.success && res.user) {
+      setUser(res.user);
+      setIsAuthenticated(true);
+      return res.user;
+    }
+    throw new Error(res.error || 'Registration failed');
   };
 
-  const logout = () => {
-    localStorage.removeItem('prepNova_user');
-    localStorage.removeItem('prepNova_token');
+  const logout = async () => {
+    await logoutApi();
     setUser(null);
     setIsAuthenticated(false);
   };
@@ -96,7 +77,7 @@ export function AuthProvider({ children }) {
   };
 
   if (loading) {
-    return null; // Or a global loading spinner
+    return null; // Or loading spinner
   }
 
   return (

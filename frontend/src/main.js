@@ -248,9 +248,19 @@ async function readJson(response) {
 }
 
 async function request(path, payload, options = {}) {
+  const token = localStorage.getItem("prepNova_token");
+  const headers = {
+    "Content-Type": "application/json",
+    ...(options.headers || {})
+  };
+
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
   const response = await fetch(`${API_BASE}${path}`, {
     method: options.method || "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: payload ? JSON.stringify(payload) : undefined
   });
 

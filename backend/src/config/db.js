@@ -1,17 +1,16 @@
 const mongoose = require("mongoose");
 
 const connectDB = async () => {
-  if (!process.env.MONGO_URI) {
-    console.warn("MONGO_URI not set. Continuing without MongoDB.");
-    return;
-  }
+  const uri = process.env.MONGO_URI || "mongodb://127.0.0.1:27017/prepnova";
 
   try {
-    await mongoose.connect(process.env.MONGO_URI);
-    console.log("MongoDB Connected");
+    await mongoose.connect(uri, {
+      serverSelectionTimeoutMS: 5000
+    });
+    console.log(`MongoDB Connected: ${uri}`);
   } catch (error) {
-    console.warn(`MongoDB unavailable: ${error.message}`);
-    console.warn("Continuing without MongoDB. Auth/database-backed features may fail.");
+    console.warn(`MongoDB connection error (${uri}): ${error.message}`);
+    console.warn("Continuing without MongoDB. Ensure MongoDB service is running (mongod or Windows service).");
   }
 };
 

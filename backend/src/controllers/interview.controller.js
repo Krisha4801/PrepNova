@@ -193,7 +193,8 @@ exports.startInterview = async (req, res) => {
     const sessionId = createSessionId();
 
     sessions[sessionId] = {
-      name: String(name || "Candidate").trim(),
+      userId: req.user ? req.user.id : null,
+      name: String(name || (req.user && req.user.email ? req.user.email.split("@")[0] : "Candidate")).trim(),
       role: selectedRole,
       currentLevel: question.level,
       questionCount: 1,
@@ -230,6 +231,10 @@ exports.followup = async (req, res) => {
       return res.status(400).json({ error: "Invalid session." });
     }
 
+    if (session.userId && req.user && session.userId !== req.user.id) {
+      return res.status(403).json({ error: "Access denied. You do not own this interview session." });
+    }
+
     if (!String(answer || "").trim()) {
       return res.status(400).json({ error: "Answer is required." });
     }
@@ -257,6 +262,10 @@ exports.skipQuestion = async (req, res) => {
       return res.status(400).json({ error: "Invalid session." });
     }
 
+    if (session.userId && req.user && session.userId !== req.user.id) {
+      return res.status(403).json({ error: "Access denied. You do not own this interview session." });
+    }
+
     const evaluation = buildSkippedEvaluation(session.lastQuestion);
     const response = await recordAndAdvance(sessionId, session, "", evaluation);
 
@@ -272,10 +281,15 @@ exports.skipQuestion = async (req, res) => {
 
 exports.endInterview = (req, res) => {
   const { sessionId } = req.params;
+  const session = sessions[sessionId];
 
-  if (sessionId && sessions[sessionId]) {
+  if (session) {
+    if (session.userId && req.user && session.userId !== req.user.id) {
+      return res.status(403).json({ error: "Access denied. You do not own this interview session." });
+    }
     delete sessions[sessionId];
   }
 
   res.json({ ended: true });
 };
+
