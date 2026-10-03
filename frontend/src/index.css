@@ -2,12 +2,20 @@
 @config "../tailwind.config.js";
 
 @layer base {
-  /* Hide scrollbars globally across all containers, pages, and browsers */
+  /* Clean typography and smooth rendering */
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  /* Hide scrollbars globally for a sleek native app feel */
   html,
   body,
   * {
-    scrollbar-width: none !important;        /* Firefox */
-    -ms-overflow-style: none !important;     /* IE/Edge */
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
   }
 
   *::-webkit-scrollbar,
@@ -18,52 +26,51 @@
     display: none !important;
   }
 
-  html,
   body {
+    @apply bg-[#F8FAFC] dark:bg-[#090D16] text-[#0F172A] dark:text-[#F8FAFC] font-sans;
     overflow-y: auto;
     overflow-x: hidden;
-    scroll-behavior: smooth;
   }
 
-  body {
-    @apply bg-background text-body font-sans;
-  }
   h1, h2, h3, h4, h5, h6 {
-    @apply text-heading;
+    @apply font-semibold tracking-tight text-[#0F172A] dark:text-white;
   }
 }
 
-@layer utilities {
-  .custom-scrollbar {
-    scrollbar-width: none !important;
-    -ms-overflow-style: none !important;
-  }
-  .custom-scrollbar::-webkit-scrollbar {
-    width: 0 !important;
-    height: 0 !important;
-    display: none !important;
+@layer components {
+  /* Professional Button Variants */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm text-white bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 disabled:opacity-50 disabled:pointer-events-none transition-all duration-150 shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40;
   }
 
-  /* Single-surface Focus Skills search bar */
-  .search-container:focus-within {
-    border-color: #2563EB !important;
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12) !important;
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm text-[#0F172A] dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 active:bg-slate-100 disabled:opacity-50 disabled:pointer-events-none transition-all duration-150 shadow-2xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300;
   }
 
-  .search-input,
-  .search-category-select {
-    border: none !important;
-    outline: none !important;
-    box-shadow: none !important;
-    background: transparent !important;
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl font-semibold text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white active:bg-slate-200/70 transition-all duration-150 focus-visible:outline-none;
   }
 
-  .search-input:focus,
-  .search-input:focus-visible,
-  .search-category-select:focus,
-  .search-category-select:focus-visible {
-    border: none !important;
-    outline: none !important;
-    box-shadow: none !important;
+  /* Standard Card Container */
+  .panel-card {
+    @apply bg-white dark:bg-[#0F172A] border border-slate-200/80 dark:border-slate-800/80 rounded-2xl p-6 shadow-2xs transition-colors duration-150;
+  }
+
+  /* Form Input Styling */
+  .input-field {
+    @apply w-full px-3.5 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 font-normal focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 dark:focus:border-indigo-500 transition-all duration-150 disabled:bg-slate-50 dark:disabled:bg-slate-800/50 disabled:cursor-not-allowed;
+  }
+
+  /* Badges */
+  .badge-primary {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-200/60 dark:border-indigo-800/50;
+  }
+
+  .badge-success {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200/60 dark:border-emerald-800/50;
+  }
+
+  .badge-neutral {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200/60 dark:border-slate-700/50;
   }
 }
