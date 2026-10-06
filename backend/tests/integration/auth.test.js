@@ -282,10 +282,10 @@ describe("Auth & Protected Routes Integration Tests", () => {
   });
 
   // ==========================================
-  // LOGOUT TESTS
+  // LOGOUT & IMMEDIATE REVOCATION TESTS
   // ==========================================
-  describe("Logout API - POST /api/auth/logout", () => {
-    it("21. should successfully logout authenticated user", async () => {
+  describe("Logout API - POST /api/auth/logout & Revocation", () => {
+    it("21. should successfully logout authenticated user and revoke active token", async () => {
       const loginRes = await request("/api/auth/login", {
         method: "POST",
         body: {
@@ -295,6 +295,7 @@ describe("Auth & Protected Routes Integration Tests", () => {
       });
       const token = loginRes.data.token;
 
+      // 1. First logout call: returns 200
       const res = await request("/api/auth/logout", {
         method: "POST",
         headers: {
@@ -305,6 +306,116 @@ describe("Auth & Protected Routes Integration Tests", () => {
       assert.strictEqual(res.status, 200);
       assert.strictEqual(res.data.success, true);
       assert.ok(res.data.message.includes("Logout successful"));
+
+      // 2. Subsequent access with logged-out token must be rejected with 401
+      const meRes = await request("/api/auth/me", {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      assert.strictEqual(meRes.status, 401);
+      assert.strictEqual(meRes.data.success, false);
+
+      // 3. Repeated logout with same token must succeed gracefully (Idempotent)
+      const repeatRes = await request("/api/auth/logout", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      assert.strictEqual(repeatRes.status, 200);
+      assert.strictEqual(repeatRes.data.success, true);
+    });
+
+    it("22. should gracefully handle logout with no token, invalid token, or expired token", async () => {
+      const res1 = await request("/api/auth/logout", { method: "POST" });
+      assert.strictEqual(res1.status, 200);
+
+      const res2 = await request("/api/auth/logout", {
+        method: "POST",
+        headers: { Authorization: "Bearer invalid.token.xyz" }
+      });
+      assert.strictEqual(res2.status, 200);
+    });
+  });
+
+  // ==========================================
+  // DELETED USER & ACCOUNT STATUS TESTS
+  // ==========================================
+  describe("User Existence & Deletion Lifecycle Invalidation", () => {
+    it("23. should immediately reject valid JWT with 401 if user is deleted from MongoDB", async () => {
+      // 1. Create temporary candidate user
+      const regRes = await request("/api/auth/register", {
+        method: "POST",
+        body: {
+          name: "Temporary User",
+          email: "temp_to_delete@example.com",
+          password: "Password123!"
+        }
+      });
+      assert.strictEqual(regRes.status, 201);
+      const token = regRes.data.token;
+      const userId = regRes.data.user.id;
+
+      // 2. Verify token works before deletion
+      const preCheck = await request("/api/auth/me", {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      assert.strictEqual(preCheck.status, 200);
+
+      // 3. Delete user directly from MongoDB
+      await User.findByIdAndDelete(userId);
+
+      // 4. Token must immediately be rejected with 401 (not 404 or 500)
+      const postCheck = await request("/api/auth/me", {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      assert.strictEqual(postCheck.status, 401);
+      assert.strictEqual(postCheck.data.success, false);
+      assert.match(postCheck.data.error, /no longer exists/i);
+
+      // 5. Normal login for deleted account must be rejected with 401
+      const loginAttempt = await request("/api/auth/login", {
+        method: "POST",
+        body: {
+          email: "temp_to_delete@example.com",
+          password: "Password123!"
+        }
+      });
+      assert.strictEqual(loginAttempt.status, 401);
+    });
+
+    it("24. should reject deactivated/suspended user accounts with 401", async () => {
+      const regRes = await request("/api/auth/register", {
+        method: "POST",
+        body: {
+          name: "Suspended User",
+          email: "suspended@example.com",
+          password: "Password123!"
+        }
+      });
+      const token = regRes.data.token;
+      const userId = regRes.data.user.id;
+
+      // Mark account as inactive
+      await User.findByIdAndUpdate(userId, { isActive: false });
+
+      // Accessing /api/auth/me must return 401
+      const meRes = await request("/api/auth/me", {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      assert.strictEqual(meRes.status, 401);
+      assert.match(meRes.data.error, /deactivated or suspended/i);
+
+      // Logging in to deactivated account must return 401
+      const loginRes = await request("/api/auth/login", {
+        method: "POST",
+        body: {
+          email: "suspended@example.com",
+          password: "Password123!"
+        }
+      });
+      assert.strictEqual(loginRes.status, 401);
     });
   });
 
@@ -317,10 +428,11 @@ describe("Auth & Protected Routes Integration Tests", () => {
 
     before(async () => {
       // User 1
-      const u1 = await request("/api/auth/login", {
+      const u1 = await request("/api/auth/register", {
         method: "POST",
         body: {
-          email: "jaimin@example.com",
+          name: "Interview User 1",
+          email: "interview_u1@example.com",
           password: "StrongPassword123!"
         }
       });

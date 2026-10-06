@@ -192,8 +192,10 @@ exports.startInterview = async (req, res) => {
     const question = await generateQuestion(selectedRole, selectedLevel);
     const sessionId = createSessionId();
 
+    const currentUserId = req.user ? String(req.user._id || req.user.id || "") : null;
+
     sessions[sessionId] = {
-      userId: req.user ? req.user.id : null,
+      userId: currentUserId,
       name: String(name || (req.user && req.user.email ? req.user.email.split("@")[0] : "Candidate")).trim(),
       role: selectedRole,
       currentLevel: question.level,
@@ -231,7 +233,8 @@ exports.followup = async (req, res) => {
       return res.status(400).json({ error: "Invalid session." });
     }
 
-    if (session.userId && req.user && session.userId !== req.user.id) {
+    const currentUserId = req.user ? String(req.user._id || req.user.id || "") : null;
+    if (session.userId && currentUserId && session.userId !== currentUserId) {
       return res.status(403).json({ error: "Access denied. You do not own this interview session." });
     }
 
@@ -262,7 +265,8 @@ exports.skipQuestion = async (req, res) => {
       return res.status(400).json({ error: "Invalid session." });
     }
 
-    if (session.userId && req.user && session.userId !== req.user.id) {
+    const currentUserId = req.user ? String(req.user._id || req.user.id || "") : null;
+    if (session.userId && currentUserId && session.userId !== currentUserId) {
       return res.status(403).json({ error: "Access denied. You do not own this interview session." });
     }
 
@@ -284,7 +288,8 @@ exports.endInterview = (req, res) => {
   const session = sessions[sessionId];
 
   if (session) {
-    if (session.userId && req.user && session.userId !== req.user.id) {
+    const currentUserId = req.user ? String(req.user._id || req.user.id || "") : null;
+    if (session.userId && currentUserId && session.userId !== currentUserId) {
       return res.status(403).json({ error: "Access denied. You do not own this interview session." });
     }
     delete sessions[sessionId];
