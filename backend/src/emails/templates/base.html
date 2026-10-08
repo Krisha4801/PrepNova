@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{subject}}</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      color: #0f172a;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrapper {
+      width: 100%;
+      background-color: #f8fafc;
+      padding: 40px 16px;
+    }
+    .container {
+      max-width: 560px;
+      margin: 0 auto;
+      background-color: #ffffff;
+      border-radius: 16px;
+      border: 1px solid #e2e8f0;
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
+      overflow: hidden;
+    }
+    .header {
+      background-color: #0f172a;
+      padding: 28px 32px;
+      text-align: left;
+    }
+    .brand {
+      display: inline-block;
+      text-decoration: none;
+    }
+    .brand-logo {
+      display: inline-block;
+      width: 32px;
+      height: 32px;
+      background-color: #4f46e5;
+      color: #ffffff;
+      border-radius: 8px;
+      font-weight: 800;
+      font-size: 18px;
+      line-height: 32px;
+      text-align: center;
+      vertical-align: middle;
+      margin-right: 10px;
+    }
+    .brand-name {
+      color: #ffffff;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      vertical-align: middle;
+    }
+    .brand-tagline {
+      display: block;
+      color: #94a3b8;
+      font-size: 11px;
+      font-weight: 500;
+      margin-top: 4px;
+      margin-left: 42px;
+      letter-spacing: 0.02em;
+    }
+    .content {
+      padding: 36px 32px;
+      line-height: 1.6;
+    }
+    .heading {
+      font-size: 22px;
+      font-weight: 700;
+      color: #0f172a;
+      margin: 0 0 16px 0;
+      letter-spacing: -0.02em;
+    }
+    .paragraph {
+      font-size: 14px;
+      color: #334155;
+      margin: 0 0 20px 0;
+    }
+    .otp-card {
+      background-color: #f1f5f9;
+      border: 1px solid #cbd5e1;
+      border-radius: 12px;
+      padding: 24px;
+      text-align: center;
+      margin: 28px 0;
+    }
+    .otp-code {
+      font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, Menlo, monospace;
+      font-size: 34px;
+      font-weight: 800;
+      letter-spacing: 8px;
+      color: #4f46e5;
+      margin: 0;
+    }
+    .otp-expiry {
+      font-size: 12px;
+      color: #64748b;
+      margin-top: 10px;
+      font-weight: 500;
+    }
+    .security-notice {
+      background-color: #f8fafc;
+      border-left: 3px solid #6366f1;
+      padding: 14px 16px;
+      border-radius: 0 8px 8px 0;
+      margin: 24px 0 0 0;
+    }
+    .security-notice p {
+      margin: 0;
+      font-size: 12px;
+      color: #475569;
+      line-height: 1.5;
+    }
+    .security-notice ul {
+      margin: 8px 0 0 0;
+      padding-left: 18px;
+      font-size: 12px;
+      color: #475569;
+    }
+    .footer {
+      background-color: #f8fafc;
+      border-top: 1px solid #e2e8f0;
+      padding: 24px 32px;
+      text-align: center;
+    }
+    .footer p {
+      margin: 0;
+      font-size: 12px;
+      color: #94a3b8;
+      line-height: 1.5;
+    }
+    .badge {
+      display: inline-block;
+      background-color: #e0e7ff;
+      color: #4338ca;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <div class="container">
+      <div class="header">
+        <div class="brand">
+          <span class="brand-logo">P</span>
+          <span class="brand-name">PrepNova</span>
+          <span class="brand-tagline">Interview Intelligence</span>
+        </div>
+      </div>
+      <div class="content">
+        {{content}}
+      </div>
+      <div class="footer">
+        <p>&copy; {{year}} PrepNova Inc. All rights reserved.</p>
+        <p style="margin-top: 4px;">Automated security notification &bull; Please do not reply to this email.</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
