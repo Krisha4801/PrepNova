@@ -1,0 +1,75 @@
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict, Any
+from enum import Enum
+
+
+class InterviewMode(str, Enum):
+    RESUME = "resume"
+    ROLE = "role"
+    RESUME_JD = "resume_jd"
+    ROLE_JD = "role_jd"
+
+
+class DifficultyLevel(str, Enum):
+    BEGINNER = "beginner"
+    INTERMEDIATE = "intermediate"
+    ADVANCED = "advanced"
+
+
+class PreviousQA(BaseModel):
+    question: str
+    answer: str
+    score: Optional[float] = None
+    level: Optional[str] = None
+
+
+class GenerateQuestionRequest(BaseModel):
+    user_id: Optional[str] = None
+    role: Optional[str] = None
+    difficulty: DifficultyLevel = DifficultyLevel.BEGINNER
+    mode: Optional[InterviewMode] = None
+    resume_id: Optional[str] = None
+    jd_id: Optional[str] = None
+    history: List[PreviousQA] = Field(default_factory=list)
+    asked_question_ids: List[str] = Field(default_factory=list)
+    focus_areas: List[str] = Field(default_factory=list)
+
+
+class GeneratedQuestion(BaseModel):
+    id: Optional[str] = None
+    question: str
+    category: str = "Technical Concept"
+    format: str = "Scenario"
+    difficulty: str = "beginner"
+    expected_concepts: List[str] = Field(default_factory=list)
+    grounding_context: Optional[str] = None
+    source: str = "rag_llm"
+    role: str = "General"
+
+
+class EvaluateAnswerRequest(BaseModel):
+    role: str
+    difficulty: str = "beginner"
+    question: str
+    answer: str
+    grounding_context: Optional[str] = None
+    format: Optional[str] = "Scenario"
+    expected_concepts: List[str] = Field(default_factory=list)
+
+
+class AnswerEvaluation(BaseModel):
+    score: float = Field(..., ge=0, le=10)
+    relevance: float = Field(..., ge=0, le=10)
+    correctness: float = Field(..., ge=0, le=10)
+    completeness: float = Field(..., ge=0, le=10)
+    clarity: float = Field(..., ge=0, le=10)
+    depth: float = Field(..., ge=0, le=10)
+    rating_label: str = "Interview ready"
+    feedback: str
+    strengths: List[str] = Field(default_factory=list)
+    areas_of_improvement: List[str] = Field(default_factory=list)
+    matched_concepts: List[str] = Field(default_factory=list)
+    missed_concepts: List[str] = Field(default_factory=list)
+    reference_answer: Optional[str] = None
+    next_difficulty: str = "beginner"
+    source: str = "langgraph_llm"

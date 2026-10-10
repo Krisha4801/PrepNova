@@ -425,7 +425,43 @@ class AuthService {
       message: "Password has been successfully updated. Please sign in with your new password."
     };
   }
+
+  /**
+   * Updates user profile fields.
+   */
+  async updateProfile(userId, updateData = {}) {
+    checkDatabaseReady();
+    const allowedFields = [
+      "name",
+      "targetRole",
+      "experienceLevel",
+      "userType",
+      "organization",
+      "university",
+      "course",
+      "phone",
+      "location",
+      "bio",
+      "avatar",
+    ];
+
+    const updates = {};
+    for (const field of allowedFields) {
+      if (updateData[field] !== undefined) {
+        updates[field] = typeof updateData[field] === "string" ? updateData[field].trim() : updateData[field];
+      }
+    }
+
+    const user = await User.findByIdAndUpdate(userId, { $set: updates }, { new: true, runValidators: true });
+    if (!user) {
+      const err = new Error("User not found.");
+      err.statusCode = 404;
+      throw err;
+    }
+    return user.toJSON();
+  }
 }
 
 module.exports = new AuthService();
+
 

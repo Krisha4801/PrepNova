@@ -5,8 +5,10 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "test": "node --test tests/**/*.test.js"
+    "test": "node --test --test-concurrency=1 tests/unit/*.test.js tests/integration/*.test.js"
   },
+
+
   "keywords": [],
   "author": "",
   "license": "ISC",
@@ -19,6 +21,7 @@
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.1.2",
+    "multer": "^2.4.0",
     "nodemailer": "^10.0.13"
   },
   "devDependencies": {

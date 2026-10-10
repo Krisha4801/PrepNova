@@ -15,13 +15,15 @@ def create_resume(
 ):
 
     return Resume(
-        candidate_info={
+        candidate={
             "name": name,
             "email": f"{name.lower().replace(' ', '')}@example.com",
         },
         education=[],
         experience=[],
-        skills=skills,
+        skills={
+            "programming_languages": skills
+        },
         projects=[],
     )
 

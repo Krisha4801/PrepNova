@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from app.api.routes.resume import router as resume_router
 from app.api.routes.jd import router as jd_router
+from app.api.routes.rag import router as rag_router
+from app.api.routes.interview import router as interview_router
 
 app = FastAPI(
     title="PrepNova AI Service",
@@ -9,6 +11,8 @@ app = FastAPI(
 
 app.include_router(resume_router)
 app.include_router(jd_router)
+app.include_router(rag_router)
+app.include_router(interview_router)
 
 
 @app.get("/health")

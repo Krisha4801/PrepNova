@@ -90,11 +90,22 @@ export function AuthProvider({ children }) {
     setIsAuthenticated(false);
   };
 
-  const updateProfile = (updatedData) => {
+  const updateProfile = async (updatedData) => {
+    try {
+      const res = await updateProfileApi(updatedData);
+      if (res.user) {
+        setUser(res.user);
+        return res.user;
+      }
+    } catch (err) {
+      console.warn("Profile update failed on server, updating locally:", err.message);
+    }
     const updatedUser = { ...user, ...updatedData };
     setUser(updatedUser);
     localStorage.setItem('prepNova_user', JSON.stringify(updatedUser));
+    return updatedUser;
   };
+
 
   if (loading) {
     return null; // Or loading spinner

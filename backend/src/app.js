@@ -33,6 +33,9 @@ app.get("/test", (req, res) => {
 // App Routes
 app.use("/api/auth", require("./routes/auth.routes"));
 app.use("/api/interview", require("./routes/interview.routes"));
+app.use("/api/resume", require("./routes/resume.routes"));
+app.use("/api/jd", require("./routes/jd.routes"));
+app.use("/api/rag", require("./routes/rag.routes"));
 
 // 404 Not Found Handler
 app.use((req, res) => {

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams, useLocation, Link } from 'react-router-dom';
 import { 
   CheckCircle2, 
@@ -14,32 +14,74 @@ import {
   BookOpen, 
   Check, 
   Target,
-  AlertTriangle
+  AlertTriangle,
+  FileText
 } from 'lucide-react';
 import WorkspaceLayout from '../components/layout/WorkspaceLayout';
+import { getInterviewReportApi, getStoredToken } from '../lib/api';
 
 export default function ResultsPage() {
   const navigate = useNavigate();
   const { sessionId: paramSessionId } = useParams();
   const location = useLocation();
 
-  // Retrieve session data from route state or fallback
   const stateData = location.state || {};
-  const sessionId = paramSessionId || stateData.sessionId || localStorage.getItem('prepnova_session_id') || 'session-completed';
-  const role = stateData.role || localStorage.getItem('prepnova_role') || 'Frontend Developer';
-  const difficulty = stateData.difficulty || localStorage.getItem('prepnova_difficulty') || 'Intermediate';
+  const sessionId = paramSessionId || stateData.sessionId || localStorage.getItem('prepnova_session_id') || '';
+  
+  const [report, setReport] = useState(null);
+  const [loading, setLoading] = useState(Boolean(sessionId));
 
-  const rawScore = stateData.finalScore !== undefined ? stateData.finalScore : 8.2;
+  useEffect(() => {
+    let isMounted = true;
+    async function loadReport() {
+      if (!sessionId || sessionId === 'session-completed') {
+        setLoading(false);
+        return;
+      }
+      try {
+        const res = await getInterviewReportApi(sessionId);
+        if (isMounted && res.session) {
+          setReport(res.session);
+        }
+      } catch (err) {
+        console.warn("Could not fetch remote interview report:", err);
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    }
+
+    loadReport();
+    return () => { isMounted = false; };
+  }, [sessionId]);
+
+  const role = report?.targetRole || stateData.role || localStorage.getItem('prepnova_role') || 'Software Engineer';
+  const difficulty = report?.difficultyLevel || stateData.difficulty || localStorage.getItem('prepnova_difficulty') || 'Intermediate';
+
+  const rawScore = report?.finalScore !== undefined ? report.finalScore : (stateData.finalScore !== undefined ? stateData.finalScore : 8.2);
   const overallScore = Math.round(Number(rawScore) * 10);
-  const durationText = stateData.duration || '12m 40s';
-  const questionsCount = stateData.questionsAnswered || stateData.totalQuestions || 6;
-  const totalQuestions = stateData.totalQuestions || 6;
+  const durationText = report?.duration || stateData.duration || '12m 40s';
+  const questionsCount = report?.questionsAnswered || stateData.questionsAnswered || stateData.totalQuestions || 6;
+  const totalQuestions = report?.totalQuestions || stateData.totalQuestions || 6;
 
-  const categoryScores = stateData.categoryScores || {
+  const categoryScores = report?.categoryScores || stateData.categoryScores || {
+    relevance: 8.5,
     correctness: 8.5,
+    completeness: 8.0,
     clarity: 8.0,
     depth: 7.8
   };
+
+  const strengths = report?.strengths?.length ? report.strengths : [
+    'Accurately identified core technical definitions and architectural primitives.',
+    'Demonstrated concise, professional communication when addressing prompt questions.',
+    'Structured responses with clear context and rationale.'
+  ];
+
+  const weaknesses = report?.weaknesses?.length ? report.weaknesses : [
+    'Elaborate further on scaling bottlenecks and memory/runtime tradeoffs.',
+    'Provide concrete production examples or quantifiable metrics in answers.',
+    'Review edge cases and error handling mechanisms during code design questions.'
+  ];
 
   const getRatingLabel = (score) => {
     if (score >= 85) return 'Interview Ready';
@@ -48,7 +90,31 @@ export default function ResultsPage() {
     return 'Review Fundamentals';
   };
 
-  const handleDownloadReport = () => {
+  const handleDownloadReport = async () => {
+    if (sessionId && sessionId !== 'session-completed') {
+      const token = getStoredToken();
+      const pdfUrl = `http://localhost:5000/api/interview/${encodeURIComponent(sessionId)}/pdf`;
+      try {
+        const resp = await fetch(pdfUrl, {
+          headers: { ...(token && { Authorization: `Bearer ${token}` }) }
+        });
+        if (resp.ok) {
+          const blob = await resp.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `PrepNova_Report_${role.replace(/\s+/g, '_')}_${Date.now()}.html`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          return;
+        }
+      } catch (e) {
+        console.warn("PDF download error:", e);
+      }
+    }
+
     const content = `PrepNova Mock Interview Report
 Role: ${role}
 Difficulty: ${difficulty}
@@ -71,6 +137,7 @@ Category Scores:
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
+
 
   return (
     <WorkspaceLayout title="Interview Scorecard">
@@ -175,18 +242,12 @@ Category Scores:
               <span>Key Strengths</span>
             </div>
             <ul className="space-y-2 text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-              <li className="flex items-start gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0 mt-1.5" />
-                <span>Accurately identified core technical definitions and architectural primitives.</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0 mt-1.5" />
-                <span>Demonstrated concise, professional communication when addressing prompt questions.</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0 mt-1.5" />
-                <span>Structured responses with clear context and rationale.</span>
-              </li>
+              {strengths.map((str, idx) => (
+                <li key={idx} className="flex items-start gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0 mt-1.5" />
+                  <span>{str}</span>
+                </li>
+              ))}
             </ul>
           </div>
 
@@ -196,21 +257,16 @@ Category Scores:
               <span>Focus Improvement Areas</span>
             </div>
             <ul className="space-y-2 text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-              <li className="flex items-start gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0 mt-1.5" />
-                <span>Elaborate further on scaling bottlenecks and memory/runtime tradeoffs.</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0 mt-1.5" />
-                <span>Provide concrete production examples or quantifiable metrics in answers.</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0 mt-1.5" />
-                <span>Review edge cases and error handling mechanisms during code design questions.</span>
-              </li>
+              {weaknesses.map((weak, idx) => (
+                <li key={idx} className="flex items-start gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0 mt-1.5" />
+                  <span>{weak}</span>
+                </li>
+              ))}
             </ul>
           </div>
         </div>
+
 
         {/* Action Row */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2">

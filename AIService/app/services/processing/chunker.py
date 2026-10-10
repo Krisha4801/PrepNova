@@ -15,152 +15,130 @@ def resume_to_documents(
     documents: List[InterviewDocument] = []
 
     # Candidate Information
-    if resume.candidate.info:
-        candidate = resume.candidate_info
-
+    candidate = getattr(resume, "candidate", None) or getattr(resume, "candidate_info", None)
+    if candidate:
         content_parts = []
+        name = getattr(candidate, "name", None)
+        email = getattr(candidate, "email", None)
+        phone = getattr(candidate, "phone", None)
+        location = getattr(candidate, "location", None)
 
-        if candidate.name:
-            content_parts.append(
-                f"Name: {candidate.name}"
-            )
-
-        if candidate.email:
-            content_parts.append(
-                f"Email: {candidate.email}"
-            )
-
-        if candidate.phone:
-            content_parts.append(
-                f"Phone: {candidate.phone}"
-            )
+        if name:
+            content_parts.append(f"Name: {name}")
+        if email:
+            content_parts.append(f"Email: {email}")
+        if phone:
+            content_parts.append(f"Phone: {phone}")
+        if location:
+            content_parts.append(f"Location: {location}")
 
         if content_parts:
-
             documents.append(
                 InterviewDocument(
-                    content=normalize_text(
-                        "\n".join(content_parts)
-                    ),
+                    content=normalize_text("\n".join(content_parts)),
                     source="resume",
                     document_type="resume",
                     section="candidate_info",
                 )
             )
+
+    # Summary
+    summary = getattr(resume, "summary", None)
+    if summary and str(summary).strip():
+        documents.append(
+            InterviewDocument(
+                content=normalize_text(f"Professional Summary: {summary}"),
+                source="resume",
+                document_type="resume",
+                section="summary",
+            )
+        )
     
     # Education
-    for index, education in enumerate(
-        resume.education or []
-    ):
-
+    for index, education in enumerate(resume.education or []):
         content_parts = []
+        degree = getattr(education, "degree", None)
+        inst = getattr(education, "institution", None)
+        field = getattr(education, "field", None) or getattr(education, "field_of_study", None)
+        start = getattr(education, "start_year", None) or getattr(education, "start_date", None)
+        end = getattr(education, "end_year", None) or getattr(education, "end_date", None)
 
-        if education.degree:
-            content_parts.append(
-                f"Degree: {education.degree}"
-            )
-
-        if education.field_of_study:
-            content_parts.append(
-                f"Field of Study: "
-                f"{education.field_of_study}"
-            )
-
-        if education.start_date:
-            content_parts.append(
-                f"Start Date: "
-                f"{education.start_date}"
-            )
-
-        if education.end_date:
-            content_parts.append(
-                f"End Date: "
-                f"{education.end_date}"
-            )
+        if degree:
+            content_parts.append(f"Degree: {degree}")
+        if inst:
+            content_parts.append(f"Institution: {inst}")
+        if field:
+            content_parts.append(f"Field: {field}")
+        if start or end:
+            content_parts.append(f"Period: {start or ''} - {end or 'Present'}")
 
         if content_parts:
-
             documents.append(
                 InterviewDocument(
-                    content=normalize_text(
-                        "\n".join(content_parts)
-                    ),
+                    content=normalize_text("\n".join(content_parts)),
                     source="resume",
                     document_type="resume",
                     section="education",
-                    metadata={
-                        "education_index": index
-                    },
+                    metadata={"education_index": index},
                 )
             )
  
     # Experience
-    for index, experience in enumerate(
-        resume.experience or []
-    ):
-
+    for index, experience in enumerate(resume.experience or []):
         content_parts = []
+        company = getattr(experience, "company", None)
+        role = getattr(experience, "role", None)
+        start = getattr(experience, "start_date", None)
+        end = getattr(experience, "end_date", None)
+        desc = getattr(experience, "description", None)
+        techs = getattr(experience, "technologies", None)
 
-        if experience.company:
-            content_parts.append(
-                f"Company: {experience.company}"
-            )
-
-        if experience.role:
-            content_parts.append(
-                f"Role: {experience.role}"
-            )
-
-        if experience.start_date:
-            content_parts.append(
-                f"Start Date: "
-                f"{experience.start_date}"
-            )
-
-        if experience.end_date:
-            content_parts.append(
-                f"End Date: "
-                f"{experience.end_date}"
-            )
-
-        if experience.description:
-            content_parts.append(
-                f"Description: "
-                f"{experience.description}"
-            )
+        if company:
+            content_parts.append(f"Company: {company}")
+        if role:
+            content_parts.append(f"Role: {role}")
+        if start or end:
+            content_parts.append(f"Dates: {start or ''} - {end or 'Present'}")
+        if desc:
+            if isinstance(desc, list):
+                content_parts.append("Responsibilities: " + "; ".join(desc))
+            else:
+                content_parts.append(f"Description: {desc}")
+        if techs:
+            norm_techs = normalize_list(techs)
+            if norm_techs:
+                content_parts.append("Technologies: " + ", ".join(norm_techs))
 
         if content_parts:
-
             documents.append(
                 InterviewDocument(
-                    content=normalize_text(
-                        "\n".join(content_parts)
-                    ),
+                    content=normalize_text("\n".join(content_parts)),
                     source="resume",
                     document_type="resume",
                     section="experience",
-                    metadata={
-                        "experience_index": index
-                    },
+                    metadata={"experience_index": index},
                 )
             )
 
     # =========================================================
     # Skills
     # =========================================================
+    raw_skills = getattr(resume, "skills", None)
+    all_skills = []
+    if raw_skills:
+        if hasattr(raw_skills, "__dict__") or hasattr(raw_skills, "model_dump"):
+            skills_dict = raw_skills.model_dump() if hasattr(raw_skills, "model_dump") else raw_skills.__dict__
+            for cat, val in skills_dict.items():
+                if isinstance(val, list) and val:
+                    all_skills.extend(val)
+        elif isinstance(raw_skills, list):
+            all_skills.extend(raw_skills)
 
-    skills = normalize_list(
-        resume.skills
-    )
-
+    skills = normalize_list(all_skills)
     if skills:
-
         documents.append(
             InterviewDocument(
-                content=(
-                    "Skills: "
-                    + ", ".join(skills)
-                ),
+                content="Skills: " + ", ".join(skills),
                 source="resume",
                 document_type="resume",
                 section="skills",
@@ -168,52 +146,73 @@ def resume_to_documents(
         )
 
     # =========================================================
+    # Certifications & Achievements
+    # =========================================================
+    certs = getattr(resume, "certifications", None)
+    if certs:
+        norm_certs = normalize_list(certs)
+        if norm_certs:
+            documents.append(
+                InterviewDocument(
+                    content="Certifications: " + ", ".join(norm_certs),
+                    source="resume",
+                    document_type="resume",
+                    section="certifications",
+                )
+            )
+
+    achievements = getattr(resume, "achievements", None)
+    if achievements:
+        norm_ach = normalize_list(achievements)
+        if norm_ach:
+            documents.append(
+                InterviewDocument(
+                    content="Achievements: " + ", ".join(norm_ach),
+                    source="resume",
+                    document_type="resume",
+                    section="achievements",
+                )
+            )
+
+    # =========================================================
     # Projects
     # =========================================================
 
-    for index, project in enumerate(
-        resume.projects or []
-    ):
-
+    for index, project in enumerate(resume.projects or []):
         content_parts = []
+        name = getattr(project, "name", None)
+        desc = getattr(project, "description", None)
+        techs = getattr(project, "technologies", None)
+        resp = getattr(project, "responsibilities", None)
 
-        if project.name:
-            content_parts.append(
-                f"Project: {project.name}"
-            )
+        if name:
+            content_parts.append(f"Project: {name}")
 
-        if project.description:
-            content_parts.append(
-                f"Description: "
-                f"{project.description}"
-            )
+        if desc:
+            if isinstance(desc, list):
+                content_parts.append("Description: " + "; ".join(desc))
+            else:
+                content_parts.append(f"Description: {desc}")
 
-        if project.technologies:
+        if resp:
+            if isinstance(resp, list):
+                content_parts.append("Responsibilities: " + "; ".join(resp))
+            else:
+                content_parts.append(f"Responsibilities: {resp}")
 
-            technologies = normalize_list(
-                project.technologies
-            )
-
-            if technologies:
-
-                content_parts.append(
-                    "Technologies: "
-                    + ", ".join(technologies)
-                )
+        if techs:
+            norm_techs = normalize_list(techs)
+            if norm_techs:
+                content_parts.append("Technologies: " + ", ".join(norm_techs))
 
         if content_parts:
-
             documents.append(
                 InterviewDocument(
-                    content=normalize_text(
-                        "\n".join(content_parts)
-                    ),
+                    content=normalize_text("\n".join(content_parts)),
                     source="resume",
                     document_type="resume",
                     section="project",
-                    metadata={
-                        "project_index": index
-                    },
+                    metadata={"project_index": index},
                 )
             )
 

@@ -22,15 +22,14 @@ class RetrievalService:
             top_k=top_k,
         )
 
-        def retrieve_role(
+    def retrieve_role(
         self,
         query: str,
         role: str,
         top_k: int = 5,
     ):
-
-            return self.store.search_role(
-                query=query,
-                role=role,
-                top_k=top_k,
-            )
+        return self.store.search_role(
+            query=query,
+            role=role,
+            top_k=top_k,
+        )

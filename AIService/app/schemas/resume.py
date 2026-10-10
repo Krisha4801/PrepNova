@@ -1,53 +1,54 @@
 from pydantic import BaseModel, Field
+from typing import List, Optional, Union
 
 class CandidateInfo(BaseModel):
-    name: str | None = None
-    email: str | None = None
-    phone: str | None = None
-    location: str | None = None
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    location: Optional[str] = None
 
 
 class Education(BaseModel):
-    degree: str | None = None
-    institution: str | None = None
-    field: str | None = None
-    start_year: str | None = None
-    end_year: str | None = None
+    degree: Optional[str] = None
+    institution: Optional[str] = None
+    field: Optional[str] = None
+    start_year: Optional[str] = None
+    end_year: Optional[str] = None
 
 
 class Experience(BaseModel):
-    company: str | None = None
-    role: str | None = None
-    start_date: str | None = None
-    end_date: str | None = None
-    description: list[str] | None = Field(default_factory=list)
-    technologies: list[str] | None = Field(default_factory=list)
+    company: Optional[str] = None
+    role: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    description: Optional[Union[List[str], str]] = Field(default_factory=list)
+    technologies: Optional[Union[List[str], str]] = Field(default_factory=list)
 
 
 class Skills(BaseModel):
-    programming_languages: list[str] | None = Field(default_factory=list)
-    frameworks: list[str] | None = Field(default_factory=list)
-    databases: list[str] | None = Field(default_factory=list)
-    cloud: list[str] | None = Field(default_factory=list)
-    ai_ml: list[str] | None = Field(default_factory=list)
-    tools: list[str] | None = Field(default_factory=list)
-    other: list[str] | None = Field(default_factory=list)
+    programming_languages: Optional[Union[List[str], str]] = Field(default_factory=list)
+    frameworks: Optional[Union[List[str], str]] = Field(default_factory=list)
+    databases: Optional[Union[List[str], str]] = Field(default_factory=list)
+    cloud: Optional[Union[List[str], str]] = Field(default_factory=list)
+    ai_ml: Optional[Union[List[str], str]] = Field(default_factory=list)
+    tools: Optional[Union[List[str], str]] = Field(default_factory=list)
+    other: Optional[Union[List[str], str]] = Field(default_factory=list)
 
 
 class Project(BaseModel):
-    name: str | None = None
-    description: str | None = None
-    technologies: list[str] | None = Field(default_factory=list)
-    responsibilities: list[str] | None = Field(default_factory=list)
+    name: Optional[str] = None
+    description: Optional[Union[List[str], str]] = None
+    technologies: Optional[Union[List[str], str]] = Field(default_factory=list)
+    responsibilities: Optional[Union[List[str], str]] = Field(default_factory=list)
 
 
 class Resume(BaseModel):
-    candidate: CandidateInfo | None = Field(default_factory=CandidateInfo)
-    summary: str | None = None
-    education: list[Education] | None = Field(default_factory=list)
-    experience: list[Experience] | None = Field(default_factory=list)
-    skills: Skills | None = None
-    projects: list[Project] | None = Field(default_factory=list)
-    certifications: list[str] | None = Field(default_factory=list)
-    achievements: list[str] | None = Field(default_factory=list)
-    links: list[str] | None = Field(default_factory=list)
+    candidate: Optional[CandidateInfo] = Field(default_factory=CandidateInfo)
+    summary: Optional[Union[str, List[str]]] = None
+    education: Optional[List[Education]] = Field(default_factory=list)
+    experience: Optional[List[Experience]] = Field(default_factory=list)
+    skills: Optional[Union[Skills, dict, List[str]]] = None
+    projects: Optional[List[Project]] = Field(default_factory=list)
+    certifications: Optional[Union[List[str], str]] = Field(default_factory=list)
+    achievements: Optional[Union[List[str], str]] = Field(default_factory=list)
+    links: Optional[Union[List[str], str]] = Field(default_factory=list)

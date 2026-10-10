@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import WorkspaceLayout from '../components/layout/WorkspaceLayout';
 import { useAuth } from '../context/AuthContext';
+import { getDashboardAnalyticsApi, getInterviewHistoryApi } from '../lib/api';
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -30,23 +31,36 @@ export default function Dashboard() {
     return 'Good evening';
   }, []);
 
-  // Retrieve any stored local mock session or recent attempts
   const [recentSessions, setRecentSessions] = useState([]);
-  const [activeRole, setActiveRole] = useState(user?.targetRole || 'Frontend Developer');
+  const [analytics, setAnalytics] = useState(null);
+  const [activeRole, setActiveRole] = useState(user?.targetRole || 'Software Engineer');
 
   useEffect(() => {
-    const storedRole = localStorage.getItem('prepnova_role');
-    if (storedRole) setActiveRole(storedRole);
-
-    const storedSessions = localStorage.getItem('prepnova_session_history');
-    if (storedSessions) {
+    let isMounted = true;
+    async function loadDashboardData() {
       try {
-        setRecentSessions(JSON.parse(storedSessions));
-      } catch (e) {
-        setRecentSessions([]);
+        const [analyticsRes, historyRes] = await Promise.allSettled([
+          getDashboardAnalyticsApi(),
+          getInterviewHistoryApi(1, 5)
+        ]);
+
+        if (isMounted) {
+          if (analyticsRes.status === 'fulfilled' && analyticsRes.value?.analytics) {
+            setAnalytics(analyticsRes.value.analytics);
+          }
+          if (historyRes.status === 'fulfilled' && historyRes.value?.sessions) {
+            setRecentSessions(historyRes.value.sessions);
+          }
+        }
+      } catch (err) {
+        console.warn("Dashboard backend fetch failed:", err);
       }
     }
+
+    loadDashboardData();
+    return () => { isMounted = false; };
   }, []);
+
 
   return (
     <WorkspaceLayout title="Dashboard">
@@ -90,18 +104,19 @@ export default function Dashboard() {
         </div>
 
         {/* ================================================== */}
-        {/* 2. THREE CORE ACTION WORKFLOW CARDS                */}
+        {/* 2. THREE CORE ACTION WORKFLOW CARDS & REAL METRICS */}
         {/* ================================================== */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
           {/* Action 1: Role-Specific Simulation */}
           <div className="panel-card flex flex-col justify-between hover:border-indigo-300 dark:hover:border-indigo-800 transition-colors">
+
             <div>
               <div className="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold mb-4 border border-indigo-100 dark:border-indigo-800/50">
                 <Layers className="w-5 h-5" />
               </div>
               <h3 className="text-base font-bold text-slate-900 dark:text-white">Technical Interview</h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">
-                Practice 6 adaptive questions covering code architecture, core concepts, and tradeoffs.
+                Adaptive AI mock interviews covering architecture, tradeoffs, and system concepts.
               </p>
             </div>
             <Link
@@ -113,7 +128,7 @@ export default function Dashboard() {
             </Link>
           </div>
 
-          {/* Action 2: Resume & ATS Check */}
+          {/* Action 2: ATS Resume Parsing */}
           <div className="panel-card flex flex-col justify-between hover:border-indigo-300 dark:hover:border-indigo-800 transition-colors">
             <div>
               <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold mb-4 border border-emerald-100 dark:border-emerald-800/50">
@@ -121,7 +136,7 @@ export default function Dashboard() {
               </div>
               <h3 className="text-base font-bold text-slate-900 dark:text-white">ATS Resume Parsing</h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">
-                Inspect keyword relevance, chronological layout compliance, and quantifiable bullet points.
+                Upload PDF resumes for vector chunking, skill extraction, and grounded mock queries.
               </p>
             </div>
             <Link
@@ -133,22 +148,25 @@ export default function Dashboard() {
             </Link>
           </div>
 
-          {/* Action 3: Session History & Metrics */}
+          {/* Action 3: Live Performance Insights */}
           <div className="panel-card flex flex-col justify-between hover:border-indigo-300 dark:hover:border-indigo-800 transition-colors">
             <div>
               <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold mb-4 border border-blue-100 dark:border-blue-800/50">
                 <TrendingUp className="w-5 h-5" />
               </div>
               <h3 className="text-base font-bold text-slate-900 dark:text-white">Performance Insights</h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">
-                Track strengths, improvement areas, and category ratings across your mock sessions.
-              </p>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className="text-2xl font-extrabold text-slate-900 dark:text-white">
+                  {analytics ? `${Math.round(analytics.averageScore * 10)}%` : '0%'}
+                </span>
+                <span className="text-xs text-slate-400">avg. across {analytics?.completedInterviews || 0} mocks</span>
+              </div>
             </div>
             <Link
               to="/history"
               className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline mt-4 pt-3 border-t border-slate-100 dark:border-slate-800"
             >
-              <span>View Past Results</span>
+              <span>View Past Results ({analytics?.completedInterviews || 0})</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </Link>
           </div>
@@ -219,29 +237,47 @@ export default function Dashboard() {
 
           {recentSessions.length > 0 ? (
             <div className="divide-y divide-slate-100 dark:divide-slate-800 pt-1">
-              {recentSessions.map((session, idx) => (
-                <div key={idx} className="py-3.5 flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-8 h-8 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
-                      <Play className="w-3.5 h-3.5" />
+              {recentSessions.map((session, idx) => {
+                const sid = session.sessionId || session.id || session._id;
+                const scorePercent = session.finalScore ? Math.round(session.finalScore * 10) : session.score;
+                const formattedDate = session.completedAt ? new Date(session.completedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : (session.date || 'Recent');
+
+                return (
+                  <div key={idx} className="py-3.5 flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-8 h-8 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
+                        <Play className="w-3.5 h-3.5" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs sm:text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">{session.targetRole || session.role}</p>
+                        <p className="text-[11px] text-slate-400 mt-0.5">{formattedDate} • <span className="capitalize">{session.difficultyLevel || session.difficulty}</span></p>
+                      </div>
                     </div>
-                    <div className="min-w-0">
-                      <p className="text-xs sm:text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">{session.role}</p>
-                      <p className="text-[11px] text-slate-400 mt-0.5">{session.date || 'Recent'} • {session.difficulty}</p>
+                    <div className="flex items-center gap-3 shrink-0">
+                      {scorePercent ? (
+                        <span className="badge-primary">{scorePercent}%</span>
+                      ) : (
+                        <span className="badge-neutral text-[11px] capitalize">{session.status || 'In Progress'}</span>
+                      )}
+                      {sid && (
+                        <Link
+                          to={`/results/${sid}`}
+                          className="btn-ghost text-xs px-2 py-1"
+                        >
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        </Link>
+                      )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    <span className="badge-primary">{session.score || 'Completed'}</span>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <div className="py-10 text-center flex flex-col items-center">
               <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800/80 text-slate-400 flex items-center justify-center mb-3">
                 <BookOpen className="w-5 h-5" />
               </div>
-              <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200">No mock sessions started yet</h4>
+              <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200">No mock sessions completed yet</h4>
               <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mt-1 leading-relaxed">
                 Launch your first interactive mock interview to test your technical fundamentals and receive detailed rubric evaluations.
               </p>
@@ -260,3 +296,4 @@ export default function Dashboard() {
     </WorkspaceLayout>
   );
 }
+

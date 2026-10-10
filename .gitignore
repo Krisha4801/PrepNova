@@ -32,6 +32,8 @@ coverage/
 # Generated RAG indexes / binary cache
 backend/rag/*.faiss
 backend/rag/*.pkl
+AIService/data/
+
 
 # Python cache
 __pycache__/

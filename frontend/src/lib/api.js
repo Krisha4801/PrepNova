@@ -8,6 +8,7 @@ export const API_ENDPOINTS = {
   REGISTER: `${API_BASE_URL}/api/auth/register`,
   LOGIN: `${API_BASE_URL}/api/auth/login`,
   ME: `${API_BASE_URL}/api/auth/me`,
+  UPDATE_PROFILE: `${API_BASE_URL}/api/auth/profile`,
   LOGOUT: `${API_BASE_URL}/api/auth/logout`,
   FORGOT_PASSWORD: `${API_BASE_URL}/api/auth/forgot-password`,
   VERIFY_RESET_OTP: `${API_BASE_URL}/api/auth/verify-reset-otp`,
@@ -19,7 +20,16 @@ export const API_ENDPOINTS = {
   INTERVIEW_START: `${API_BASE_URL}/api/interview/start`,
   INTERVIEW_FOLLOWUP: `${API_BASE_URL}/api/interview/followup`,
   INTERVIEW_SKIP: `${API_BASE_URL}/api/interview/skip`,
-  INTERVIEW_END: (sessionId) => `${API_BASE_URL}/api/interview/${encodeURIComponent(sessionId)}`
+  INTERVIEW_HISTORY: `${API_BASE_URL}/api/interview/history`,
+  INTERVIEW_ANALYTICS: `${API_BASE_URL}/api/interview/analytics`,
+  INTERVIEW_REPORT: (sessionId) => `${API_BASE_URL}/api/interview/${encodeURIComponent(sessionId)}/report`,
+  INTERVIEW_PDF: (sessionId) => `${API_BASE_URL}/api/interview/${encodeURIComponent(sessionId)}/pdf`,
+  INTERVIEW_END: (sessionId) => `${API_BASE_URL}/api/interview/${encodeURIComponent(sessionId)}`,
+  RESUMES: `${API_BASE_URL}/api/resumes`,
+  RESUME_UPLOAD: `${API_BASE_URL}/api/resumes/upload`,
+  RESUME_BY_ID: (id) => `${API_BASE_URL}/api/resumes/${encodeURIComponent(id)}`,
+  JDS: `${API_BASE_URL}/api/jds`,
+  JD_BY_ID: (id) => `${API_BASE_URL}/api/jds/${encodeURIComponent(id)}`,
 };
 
 /**
@@ -83,9 +93,7 @@ export async function apiFetch(url, options = {}) {
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    // Handle 401 Unauthorized globally across all API requests
     if (response.status === 401) {
-      // Clear local session storage if authenticated request was rejected
       if (token) {
         clearAuthSession();
       }
@@ -140,6 +148,21 @@ export async function getMeApi() {
   return await apiFetch(API_ENDPOINTS.ME, {
     method: "GET"
   });
+}
+
+/**
+ * Update user profile helper
+ */
+export async function updateProfileApi(profileData) {
+  const data = await apiFetch(API_ENDPOINTS.UPDATE_PROFILE, {
+    method: "PUT",
+    body: JSON.stringify(profileData)
+  });
+  if (data.user) {
+    const current = getStoredUser() || {};
+    setAuthSession(null, { ...current, ...data.user });
+  }
+  return data;
 }
 
 /**
@@ -222,6 +245,86 @@ export async function resendResetOtpApi(email) {
   });
 }
 
+// -------------------------------------------------------------
+// Interview API Helpers
+// -------------------------------------------------------------
+
+export async function startInterviewApi(payload) {
+  return await apiFetch(API_ENDPOINTS.INTERVIEW_START, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function followupInterviewApi(payload) {
+  return await apiFetch(API_ENDPOINTS.INTERVIEW_FOLLOWUP, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function skipInterviewQuestionApi(payload) {
+  return await apiFetch(API_ENDPOINTS.INTERVIEW_SKIP, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function endInterviewApi(sessionId) {
+  return await apiFetch(API_ENDPOINTS.INTERVIEW_END(sessionId), {
+    method: "DELETE"
+  });
+}
+
+export async function getInterviewHistoryApi(page = 1, limit = 10) {
+  return await apiFetch(`${API_ENDPOINTS.INTERVIEW_HISTORY}?page=${page}&limit=${limit}`, {
+    method: "GET"
+  });
+}
+
+export async function getDashboardAnalyticsApi() {
+  return await apiFetch(API_ENDPOINTS.INTERVIEW_ANALYTICS, {
+    method: "GET"
+  });
+}
+
+export async function getInterviewReportApi(sessionId) {
+  return await apiFetch(API_ENDPOINTS.INTERVIEW_REPORT(sessionId), {
+    method: "GET"
+  });
+}
+
+export function getInterviewPdfUrl(sessionId) {
+  return API_ENDPOINTS.INTERVIEW_PDF(sessionId);
+}
+
+// -------------------------------------------------------------
+// Resume & JD Management APIs
+// -------------------------------------------------------------
+
+export async function listResumesApi() {
+  return await apiFetch(API_ENDPOINTS.RESUMES, { method: "GET" });
+}
+
+export async function deleteResumeApi(resumeId) {
+  return await apiFetch(API_ENDPOINTS.RESUME_BY_ID(resumeId), { method: "DELETE" });
+}
+
+export async function listJdsApi() {
+  return await apiFetch(API_ENDPOINTS.JDS, { method: "GET" });
+}
+
+export async function createJdApi(title, text) {
+  return await apiFetch(API_ENDPOINTS.JDS, {
+    method: "POST",
+    body: JSON.stringify({ title, text })
+  });
+}
+
+export async function deleteJdApi(jdId) {
+  return await apiFetch(API_ENDPOINTS.JD_BY_ID(jdId), { method: "DELETE" });
+}
+
 /**
  * Client-side route guard helper
  */
@@ -233,3 +336,4 @@ export function requireAuth(redirectUrl = "/login") {
   }
   return true;
 }
+

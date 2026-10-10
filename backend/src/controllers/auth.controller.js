@@ -147,4 +147,26 @@ exports.resetPassword = async (req, res) => {
   }
 };
 
+/**
+ * Controller: Update user profile
+ * PUT /api/auth/profile
+ */
+exports.updateProfile = async (req, res) => {
+  try {
+    const updatedUser = await authService.updateProfile(req.user.id, req.body);
+    return res.status(200).json({
+      success: true,
+      message: "Profile updated successfully.",
+      user: updatedUser
+    });
+  } catch (err) {
+    const statusCode = err.statusCode || 500;
+    return res.status(statusCode).json({
+      success: false,
+      error: err.message || "Failed to update profile."
+    });
+  }
+};
+
+
 

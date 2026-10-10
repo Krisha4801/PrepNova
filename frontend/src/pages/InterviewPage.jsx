@@ -22,6 +22,12 @@ import {
   AlertCircle 
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import {
+  startInterviewApi,
+  followupInterviewApi,
+  skipInterviewQuestionApi,
+  endInterviewApi
+} from '../lib/api';
 
 export default function InterviewPage() {
   const navigate = useNavigate();
@@ -123,36 +129,25 @@ export default function InterviewPage() {
     const initSession = async () => {
       setLoading(true);
       try {
-        const token = localStorage.getItem('prepNova_token');
-        const response = await fetch('http://localhost:5000/api/interview/start', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token && { Authorization: `Bearer ${token}` })
-          },
-          body: JSON.stringify({
-            name: user?.name || 'Candidate',
-            role: role,
-            level: difficulty.toLowerCase()
-          })
+        const data = await startInterviewApi({
+          name: user?.name || 'Candidate',
+          role: role,
+          level: difficulty.toLowerCase()
         });
 
-        if (response.ok) {
-          const data = await response.json();
-          if (isMounted) {
-            if (data.sessionId) {
-              setSessionId(data.sessionId);
-              localStorage.setItem('prepnova_session_id', data.sessionId);
-            }
-            if (data.question) setQuestionText(data.question);
-            if (data.source) setQuestionSource(data.source);
-            if (data.progress?.current) setCurrentQuestionIdx(data.progress.current);
+        if (isMounted) {
+          if (data.sessionId) {
+            setSessionId(data.sessionId);
+            localStorage.setItem('prepnova_session_id', data.sessionId);
           }
-        } else {
-          setQuestionText(`Explain the core architectural principles and state lifecycle in ${role}.`);
+          if (data.question) setQuestionText(data.question);
+          if (data.source) setQuestionSource(data.source);
+          if (data.progress?.current) setCurrentQuestionIdx(data.progress.current);
         }
       } catch (err) {
-        setQuestionText(`Explain the core architectural principles and state lifecycle in ${role}.`);
+        if (isMounted) {
+          setQuestionText(`Explain the core architectural principles and state lifecycle in ${role}.`);
+        }
       } finally {
         if (isMounted) setLoading(false);
       }
@@ -180,28 +175,14 @@ export default function InterviewPage() {
   const handleSkipQuestion = async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem('prepNova_token');
-      const response = await fetch('http://localhost:5000/api/interview/skip', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token && { Authorization: `Bearer ${token}` })
-        },
-        body: JSON.stringify({ sessionId })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data.completed) {
-          finishInterview(data);
-          return;
-        }
-        if (data.question) setQuestionText(data.question);
-        if (data.evaluation) setLastEvaluation(data.evaluation);
-        if (data.progress?.current) setCurrentQuestionIdx(data.progress.current);
-      } else {
-        setCurrentQuestionIdx(prev => Math.min(totalQuestions, prev + 1));
+      const data = await skipInterviewQuestionApi({ sessionId });
+      if (data.completed) {
+        finishInterview(data);
+        return;
       }
+      if (data.question) setQuestionText(data.question);
+      if (data.evaluation) setLastEvaluation(data.evaluation);
+      if (data.progress?.current) setCurrentQuestionIdx(data.progress.current);
     } catch (e) {
       setCurrentQuestionIdx(prev => Math.min(totalQuestions, prev + 1));
     } finally {
@@ -219,31 +200,18 @@ export default function InterviewPage() {
 
     setLoading(true);
     try {
-      const token = localStorage.getItem('prepNova_token');
-      const response = await fetch('http://localhost:5000/api/interview/followup', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token && { Authorization: `Bearer ${token}` })
-        },
-        body: JSON.stringify({
-          sessionId,
-          answer: answer
-        })
+      const data = await followupInterviewApi({
+        sessionId,
+        answer: answer
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        if (data.completed) {
-          finishInterview(data);
-          return;
-        }
-        if (data.question) setQuestionText(data.question);
-        if (data.evaluation) setLastEvaluation(data.evaluation);
-        if (data.progress?.current) setCurrentQuestionIdx(data.progress.current);
-      } else {
-        setCurrentQuestionIdx(prev => Math.min(totalQuestions, prev + 1));
+      if (data.completed) {
+        finishInterview(data);
+        return;
       }
+      if (data.question) setQuestionText(data.question);
+      if (data.evaluation) setLastEvaluation(data.evaluation);
+      if (data.progress?.current) setCurrentQuestionIdx(data.progress.current);
     } catch (err) {
       setCurrentQuestionIdx(prev => Math.min(totalQuestions, prev + 1));
     } finally {
@@ -270,18 +238,13 @@ export default function InterviewPage() {
 
   const handleEndInterview = async () => {
     try {
-      const token = localStorage.getItem('prepNova_token');
       if (sessionId) {
-        await fetch(`http://localhost:5000/api/interview/${encodeURIComponent(sessionId)}`, {
-          method: 'DELETE',
-          headers: {
-            ...(token && { Authorization: `Bearer ${token}` })
-          }
-        }).catch(() => null);
+        await endInterviewApi(sessionId).catch(() => null);
       }
     } catch (_) {}
     finishInterview({});
   };
+
 
   const progressPercent = Math.min(100, Math.round((currentQuestionIdx / totalQuestions) * 100));
   const wordCount = textAnswer.trim() ? textAnswer.trim().split(/\s+/).length : 0;
