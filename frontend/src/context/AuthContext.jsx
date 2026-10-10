@@ -1,5 +1,15 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { loginApi, registerApi, getMeApi, logoutApi, getStoredToken, getStoredUser, setAuthSession, clearAuthSession } from '../lib/api';
+import { 
+  loginApi, 
+  registerApi, 
+  getMeApi, 
+  logoutApi, 
+  exchangeOAuthTicketApi,
+  getStoredToken, 
+  getStoredUser, 
+  setAuthSession, 
+  clearAuthSession 
+} from '../lib/api';
 
 const AuthContext = createContext();
 
@@ -64,6 +74,16 @@ export function AuthProvider({ children }) {
     throw new Error(res.error || 'Registration failed');
   };
 
+  const loginWithOAuthTicket = async (ticket) => {
+    const res = await exchangeOAuthTicketApi(ticket);
+    if (res.success && res.user) {
+      setUser(res.user);
+      setIsAuthenticated(true);
+      return res.user;
+    }
+    throw new Error(res.error || 'OAuth authentication failed');
+  };
+
   const logout = async () => {
     await logoutApi();
     setUser(null);
@@ -81,7 +101,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated, login, signup, logout, updateProfile }}>
+    <AuthContext.Provider value={{ user, isAuthenticated, login, signup, loginWithOAuthTicket, logout, updateProfile }}>
       {children}
     </AuthContext.Provider>
   );

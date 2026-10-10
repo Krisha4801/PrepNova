@@ -11,6 +11,7 @@ import ProfilePage from './pages/ProfilePage';
 import SettingsPage from './pages/SettingsPage';
 import LoginPage from './pages/LoginPage';
 import SignupPage from './pages/SignupPage';
+import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import InterviewPage from './pages/InterviewPage';
 import ResumeAnalysisPage from './pages/ResumeAnalysisPage';
 import RoleJobPage from './pages/RoleJobPage';
@@ -75,6 +76,8 @@ export default function App() {
             {/* Public Routes without Layout */}
             <Route path="/login" element={<LoginPage />} />
             <Route path="/signup" element={<SignupPage />} />
+            <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+            <Route path="/reset-password" element={<ForgotPasswordPage />} />
 
             {/* Routes with Layout */}
             <Route path="/" element={<Layout />}>

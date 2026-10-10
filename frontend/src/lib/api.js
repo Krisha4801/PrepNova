@@ -9,6 +9,13 @@ export const API_ENDPOINTS = {
   LOGIN: `${API_BASE_URL}/api/auth/login`,
   ME: `${API_BASE_URL}/api/auth/me`,
   LOGOUT: `${API_BASE_URL}/api/auth/logout`,
+  FORGOT_PASSWORD: `${API_BASE_URL}/api/auth/forgot-password`,
+  VERIFY_RESET_OTP: `${API_BASE_URL}/api/auth/verify-reset-otp`,
+  RESET_PASSWORD: `${API_BASE_URL}/api/auth/reset-password`,
+  RESEND_RESET_OTP: `${API_BASE_URL}/api/auth/resend-reset-otp`,
+  OAUTH_INITIATE: (provider) => `${API_BASE_URL}/api/auth/oauth/${encodeURIComponent(provider)}`,
+  OAUTH_EXCHANGE: `${API_BASE_URL}/api/auth/oauth/exchange`,
+  OAUTH_PROVIDERS: `${API_BASE_URL}/api/auth/oauth/providers`,
   INTERVIEW_START: `${API_BASE_URL}/api/interview/start`,
   INTERVIEW_FOLLOWUP: `${API_BASE_URL}/api/interview/followup`,
   INTERVIEW_SKIP: `${API_BASE_URL}/api/interview/skip`,
@@ -76,6 +83,14 @@ export async function apiFetch(url, options = {}) {
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
+    // Handle 401 Unauthorized globally across all API requests
+    if (response.status === 401) {
+      // Clear local session storage if authenticated request was rejected
+      if (token) {
+        clearAuthSession();
+      }
+    }
+
     const errorMsg = data.error || data.message || `Request failed with status ${response.status}`;
     const error = new Error(errorMsg);
     error.status = response.status;
@@ -128,6 +143,31 @@ export async function getMeApi() {
 }
 
 /**
+ * Exchange OAuth one-time handoff ticket for application session token
+ */
+export async function exchangeOAuthTicketApi(ticket) {
+  const data = await apiFetch(API_ENDPOINTS.OAUTH_EXCHANGE, {
+    method: "POST",
+    body: JSON.stringify({ ticket })
+  });
+
+  if (data.token && data.user) {
+    setAuthSession(data.token, data.user);
+  }
+
+  return data;
+}
+
+/**
+ * Fetch available OAuth providers
+ */
+export async function getOAuthProvidersApi() {
+  return await apiFetch(API_ENDPOINTS.OAUTH_PROVIDERS, {
+    method: "GET"
+  });
+}
+
+/**
  * Logout API helper
  */
 export async function logoutApi() {
@@ -140,6 +180,46 @@ export async function logoutApi() {
   } finally {
     clearAuthSession();
   }
+}
+
+/**
+ * Request password reset 6-digit OTP code
+ */
+export async function forgotPasswordApi(email) {
+  return await apiFetch(API_ENDPOINTS.FORGOT_PASSWORD, {
+    method: "POST",
+    body: JSON.stringify({ email })
+  });
+}
+
+/**
+ * Verify submitted 6-digit OTP code and retrieve short-lived resetToken
+ */
+export async function verifyResetOtpApi(email, otp) {
+  return await apiFetch(API_ENDPOINTS.VERIFY_RESET_OTP, {
+    method: "POST",
+    body: JSON.stringify({ email, otp })
+  });
+}
+
+/**
+ * Reset password using verified resetToken
+ */
+export async function resetPasswordApi(resetToken, newPassword, confirmPassword) {
+  return await apiFetch(API_ENDPOINTS.RESET_PASSWORD, {
+    method: "POST",
+    body: JSON.stringify({ resetToken, newPassword, confirmPassword })
+  });
+}
+
+/**
+ * Resend password reset OTP
+ */
+export async function resendResetOtpApi(email) {
+  return await apiFetch(API_ENDPOINTS.RESEND_RESET_OTP, {
+    method: "POST",
+    body: JSON.stringify({ email })
+  });
 }
 
 /**
