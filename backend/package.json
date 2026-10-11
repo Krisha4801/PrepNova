@@ -5,7 +5,8 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "test": "node --test --test-concurrency=1 tests/unit/*.test.js tests/integration/*.test.js"
+    "test": "node --test --test-concurrency=1 tests/unit/*.test.js tests/integration/*.test.js",
+    "test:e2e": "node scripts/live_e2e_audit.js"
   },
 
 

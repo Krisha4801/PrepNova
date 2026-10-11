@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const mongoose = require("mongoose");
 const Resume = require("../models/Resume");
 const { aiServiceClient } = require("../services/aiService.client");
 
@@ -95,7 +96,11 @@ exports.getResumeById = async (req, res, next) => {
     const userId = req.user ? String(req.user._id || req.user.id) : null;
     const { documentId } = req.params;
 
-    const resume = await Resume.findOne({ documentId });
+    const query = mongoose.Types.ObjectId.isValid(documentId)
+      ? { $or: [{ documentId }, { _id: documentId }] }
+      : { documentId };
+
+    const resume = await Resume.findOne(query);
     if (!resume) {
       return res.status(404).json({
         success: false,
@@ -129,7 +134,11 @@ exports.deleteResume = async (req, res, next) => {
     const userId = req.user ? String(req.user._id || req.user.id) : null;
     const { documentId } = req.params;
 
-    const resume = await Resume.findOne({ documentId });
+    const query = mongoose.Types.ObjectId.isValid(documentId)
+      ? { $or: [{ documentId }, { _id: documentId }] }
+      : { documentId };
+
+    const resume = await Resume.findOne(query);
     if (!resume) {
       return res.status(404).json({
         success: false,

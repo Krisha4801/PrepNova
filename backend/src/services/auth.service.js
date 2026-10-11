@@ -452,7 +452,7 @@ class AuthService {
       }
     }
 
-    const user = await User.findByIdAndUpdate(userId, { $set: updates }, { new: true, runValidators: true });
+    const user = await User.findByIdAndUpdate(userId, { $set: updates }, { returnDocument: "after", runValidators: true });
     if (!user) {
       const err = new Error("User not found.");
       err.statusCode = 404;

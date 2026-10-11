@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const mongoose = require("mongoose");
 const JobDescription = require("../models/JobDescription");
 const { aiServiceClient } = require("../services/aiService.client");
 
@@ -102,7 +103,11 @@ exports.getJdById = async (req, res, next) => {
     const userId = req.user ? String(req.user._id || req.user.id) : null;
     const { documentId } = req.params;
 
-    const jd = await JobDescription.findOne({ documentId });
+    const query = mongoose.Types.ObjectId.isValid(documentId)
+      ? { $or: [{ documentId }, { _id: documentId }] }
+      : { documentId };
+
+    const jd = await JobDescription.findOne(query);
     if (!jd) {
       return res.status(404).json({
         success: false,
@@ -135,7 +140,11 @@ exports.deleteJd = async (req, res, next) => {
     const userId = req.user ? String(req.user._id || req.user.id) : null;
     const { documentId } = req.params;
 
-    const jd = await JobDescription.findOne({ documentId });
+    const query = mongoose.Types.ObjectId.isValid(documentId)
+      ? { $or: [{ documentId }, { _id: documentId }] }
+      : { documentId };
+
+    const jd = await JobDescription.findOne(query);
     if (!jd) {
       return res.status(404).json({
         success: false,

@@ -1,9 +1,23 @@
+import threading
 from rich.traceback import PathHighlighter
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict
 import chromadb
 from app.schemas.document import InterviewDocument
 from app.services.embeddings.service import EmbeddingService
+
+_chroma_clients: Dict[str, chromadb.PersistentClient] = {}
+_chroma_client_lock = threading.Lock()
+
+def get_chroma_client(persist_directory: str = "data/chroma") -> chromadb.PersistentClient:
+    """Thread-safe persistent ChromaDB client reuse."""
+    norm_path = str(Path(persist_directory).resolve())
+    if norm_path not in _chroma_clients:
+        with _chroma_client_lock:
+            if norm_path not in _chroma_clients:
+                Path(persist_directory).mkdir(parents=True, exist_ok=True)
+                _chroma_clients[norm_path] = chromadb.PersistentClient(path=persist_directory)
+    return _chroma_clients[norm_path]
 
 class ChromaStore:
 
@@ -18,9 +32,7 @@ class ChromaStore:
             exist_ok=True,
         )
 
-        self.client = chromadb.PersistentClient(
-            path = persist_directory
-        )
+        self.client = get_chroma_client(persist_directory)
 
         self.collection = (
             self.client.get_or_create_collection(
@@ -34,6 +46,7 @@ class ChromaStore:
         self.embedding_service = (
             EmbeddingService()
         )
+
 
         # =========================================================
     # ADD DOCUMENTS
