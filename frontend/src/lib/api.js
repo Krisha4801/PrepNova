@@ -76,8 +76,9 @@ export function clearAuthSession() {
  */
 export async function apiFetch(url, options = {}) {
   const token = getStoredToken();
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
   const headers = {
-    "Content-Type": "application/json",
+    ...(isFormData ? {} : { "Content-Type": "application/json" }),
     ...(options.headers || {})
   };
 
@@ -302,27 +303,59 @@ export function getInterviewPdfUrl(sessionId) {
 // Resume & JD Management APIs
 // -------------------------------------------------------------
 
+export async function uploadResumeApi(file) {
+  const formData = new FormData();
+  formData.append("resume", file);
+  return await apiFetch(`${API_BASE_URL}/api/resume/upload`, {
+    method: "POST",
+    body: formData
+  });
+}
+
+export async function getMyResumesApi() {
+  return await apiFetch(`${API_BASE_URL}/api/resume/my`, { method: "GET" });
+}
+
 export async function listResumesApi() {
-  return await apiFetch(API_ENDPOINTS.RESUMES, { method: "GET" });
+  return await apiFetch(`${API_BASE_URL}/api/resume/my`, { method: "GET" });
 }
 
 export async function deleteResumeApi(resumeId) {
-  return await apiFetch(API_ENDPOINTS.RESUME_BY_ID(resumeId), { method: "DELETE" });
+  return await apiFetch(`${API_BASE_URL}/api/resume/${encodeURIComponent(resumeId)}`, { method: "DELETE" });
+}
+
+export async function uploadJdApi(fileOrText, filename = "job_description.pdf") {
+  if (typeof fileOrText === "string") {
+    return await apiFetch(`${API_BASE_URL}/api/jd/extract`, {
+      method: "POST",
+      body: JSON.stringify({ text: fileOrText })
+    });
+  }
+  const formData = new FormData();
+  formData.append("jd", fileOrText, filename);
+  return await apiFetch(`${API_BASE_URL}/api/jd/upload`, {
+    method: "POST",
+    body: formData
+  });
+}
+
+export async function getMyJdsApi() {
+  return await apiFetch(`${API_BASE_URL}/api/jd/my`, { method: "GET" });
 }
 
 export async function listJdsApi() {
-  return await apiFetch(API_ENDPOINTS.JDS, { method: "GET" });
+  return await apiFetch(`${API_BASE_URL}/api/jd/my`, { method: "GET" });
 }
 
 export async function createJdApi(title, text) {
-  return await apiFetch(API_ENDPOINTS.JDS, {
+  return await apiFetch(`${API_BASE_URL}/api/jd/extract`, {
     method: "POST",
     body: JSON.stringify({ title, text })
   });
 }
 
 export async function deleteJdApi(jdId) {
-  return await apiFetch(API_ENDPOINTS.JD_BY_ID(jdId), { method: "DELETE" });
+  return await apiFetch(`${API_BASE_URL}/api/jd/${encodeURIComponent(jdId)}`, { method: "DELETE" });
 }
 
 /**

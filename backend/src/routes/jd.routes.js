@@ -13,8 +13,23 @@ const router = express.Router();
 // All JD routes require authentication
 router.use(authenticateToken);
 
+// Helper middleware supporting both 'file' and 'jd' form fields
+const jdUploadMiddleware = (req, res, next) => {
+  uploadPdf.fields([
+    { name: "file", maxCount: 1 },
+    { name: "jd", maxCount: 1 }
+  ])(req, res, (err) => {
+    if (err) return next(err);
+    if (!req.file && req.files) {
+      req.file = req.files.file?.[0] || req.files.jd?.[0] || null;
+    }
+    next();
+  });
+};
+
 // Upload PDF or submit text for JD extraction
-router.post("/extract", uploadPdf.single("file"), extractAndIndexJd);
+router.post("/extract", jdUploadMiddleware, extractAndIndexJd);
+router.post("/upload", jdUploadMiddleware, extractAndIndexJd);
 
 // Retrieve JDs
 router.get("/my", getMyJds);

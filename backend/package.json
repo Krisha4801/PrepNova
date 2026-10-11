@@ -8,8 +8,6 @@
     "test": "node --test --test-concurrency=1 tests/unit/*.test.js tests/integration/*.test.js",
     "test:e2e": "node scripts/live_e2e_audit.js"
   },
-
-
   "keywords": [],
   "author": "",
   "license": "ISC",
@@ -23,7 +21,7 @@
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.1.2",
     "multer": "^2.4.0",
-    "nodemailer": "^10.0.13"
+    "nodemailer": "^10.1.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.11"

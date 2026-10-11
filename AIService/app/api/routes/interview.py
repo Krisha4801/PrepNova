@@ -3,11 +3,14 @@ from app.schemas.interview import (
     GenerateQuestionRequest,
     GeneratedQuestion,
     EvaluateAnswerRequest,
-    AnswerEvaluation
+    AnswerEvaluation,
+    EvaluateSessionRequest,
+    SessionEvaluationResult
 )
 from app.services.interview.graph import (
     question_workflow,
     evaluation_workflow,
+    evaluate_full_session,
     QuestionState,
     EvaluationState
 )
@@ -94,4 +97,19 @@ async def evaluate_interview_answer(request: EvaluateAnswerRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"LangGraph evaluation error: {str(e)}"
+        )
+
+
+@router.post("/evaluate-session", response_model=SessionEvaluationResult)
+async def evaluate_interview_session(request: EvaluateSessionRequest):
+    """
+    Evaluates an entire interview session in a single batch LLM call.
+    Reduces token usage, avoids turn-by-turn wait times, and provides a holistic scorecard.
+    """
+    try:
+        return evaluate_full_session(request)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Session evaluation error: {str(e)}"
         )

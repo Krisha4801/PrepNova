@@ -255,7 +255,7 @@ class AiServiceClient {
   async evaluateInterviewAnswer(params = {}) {
     try {
       const response = await this.httpClient.post("/interview/evaluate-answer", {
-        role: params.role || "Software Engineer",
+        role: params.role || "Candidate",
         difficulty: params.difficulty || "beginner",
         question: params.question,
         answer: params.answer,
@@ -266,6 +266,23 @@ class AiServiceClient {
       return response.data;
     } catch (err) {
       throw normalizeAiServiceError(err, "Interview answer evaluation");
+    }
+  }
+
+  /**
+   * Evaluate full interview session transcript in a single batch LLM call
+   * @param {Object} params - { role, difficulty, transcript }
+   */
+  async evaluateSession(params = {}) {
+    try {
+      const response = await this.httpClient.post("/interview/evaluate-session", {
+        role: params.role || "Candidate",
+        difficulty: params.difficulty || "beginner",
+        transcript: params.transcript || []
+      });
+      return response.data;
+    } catch (err) {
+      throw normalizeAiServiceError(err, "Session batch evaluation");
     }
   }
 }

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   FileText, 
@@ -14,11 +14,13 @@ import {
   FileCheck2,
   AlertCircle,
   File,
-  RotateCcw
+  RotateCcw,
+  Loader2
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import WorkspaceLayout from '../components/layout/WorkspaceLayout';
+import { uploadResumeApi, uploadJdApi, getMyResumesApi, getMyJdsApi } from '../lib/api';
 
 export default function SessionSetup() {
   const navigate = useNavigate();
@@ -34,25 +36,92 @@ export default function SessionSetup() {
     general: false
   });
 
-  // Resume Input State
-  const [resumeFile, setResumeFile] = useState({
-    name: 'Alex_Chen_Resume.pdf',
-    size: '1.4 MB',
-    uploadedAt: 'Just now'
+  // Resume Input State (Initializes from saved user resume if available)
+  const [resumeFile, setResumeFile] = useState(() => {
+    try {
+      const savedDoc = localStorage.getItem('prepnova_resume_doc');
+      if (savedDoc) {
+        const doc = JSON.parse(savedDoc);
+        const sizeStr = typeof doc.fileSize === 'number'
+          ? `${(doc.fileSize / (1024 * 1024)).toFixed(1)} MB`
+          : (doc.size || '1.2 MB');
+        return {
+          name: doc.originalFilename || doc.name || doc.fileName || 'My_Resume.pdf',
+          size: sizeStr,
+          uploadedAt: 'Active Resume',
+          documentId: doc.documentId,
+          detectedRole: doc.detectedRole || null,
+          skills: doc.parsedData?.skills || null
+        };
+      }
+    } catch (e) { /* ignore */ }
+    return null;
   });
+  const [isResumeUploading, setIsResumeUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
 
   // Job Description State (Text + PDF tabs)
   const [jdTab, setJdTab] = useState('text'); // 'text' | 'pdf'
-  const [jobDescription, setJobDescription] = useState('');
-  const [jdFile, setJdFile] = useState(null);
+  const [jobDescription, setJobDescription] = useState(() => localStorage.getItem('prepnova_job_description') || '');
+  const [jdFile, setJdFile] = useState(() => {
+    try {
+      const savedJd = localStorage.getItem('prepnova_jd_doc');
+      if (savedJd) {
+        const doc = JSON.parse(savedJd);
+        return {
+          name: doc.originalFilename || 'Job_Description.pdf',
+          size: '1.0 MB',
+          documentId: doc.documentId,
+          roleTitle: doc.parsedData?.role_title || null
+        };
+      }
+    } catch (e) { /* ignore */ }
+    return null;
+  });
   const [jdIsDragging, setJdIsDragging] = useState(false);
   const [jdUploadProgress, setJdUploadProgress] = useState(null);
   const [jdExtractSuccess, setJdExtractSuccess] = useState(false);
 
   // Role State
-  const [roleInput, setRoleInput] = useState(user?.preferredRole || 'Software Engineer');
+  const [roleInput, setRoleInput] = useState(() => {
+    return localStorage.getItem('prepnova_role') || user?.preferredRole || '';
+  });
   const [errorMessage, setErrorMessage] = useState(null);
+
+  // Fetch real user resumes on mount if not already in state
+  useEffect(() => {
+    let isMounted = true;
+    const fetchExistingData = async () => {
+      try {
+        const res = await getMyResumesApi();
+        if (isMounted && res.resumes && res.resumes.length > 0) {
+          const latest = res.resumes[0];
+          const formattedResume = {
+            name: latest.originalFilename,
+            size: `${(latest.fileSize / (1024 * 1024)).toFixed(1)} MB`,
+            uploadedAt: 'Active Resume',
+            documentId: latest.documentId,
+            detectedRole: latest.detectedRole,
+            skills: latest.parsedData?.skills
+          };
+          setResumeFile(formattedResume);
+          localStorage.setItem('prepnova_resume_id', latest.documentId);
+          localStorage.setItem('prepnova_resume_doc', JSON.stringify(latest));
+          localStorage.setItem('prepnova_resume_name', latest.originalFilename);
+
+          // Auto-enable Resume source card since user has an active resume stored
+          setSources(prev => ({ ...prev, resume: true }));
+
+          if (!roleInput && latest.detectedRole) {
+            setRoleInput(latest.detectedRole);
+          }
+        }
+      } catch (err) { /* silent fallback */ }
+    };
+
+    fetchExistingData();
+    return () => { isMounted = false; };
+  }, []);
 
   // Popular role chips
   const popularRoles = [
@@ -111,23 +180,60 @@ export default function SessionSetup() {
     }
   };
 
-  const processResumeFile = (file) => {
+  const processResumeFile = async (file) => {
+    if (!file) return;
+
     // Check file size (max 5MB)
     if (file.size > 5 * 1024 * 1024) {
       setErrorMessage('Resume file size exceeds the 5MB limit. Please upload a smaller PDF or DOCX file.');
       return;
     }
+
     const sizeInMb = (file.size / (1024 * 1024)).toFixed(1);
-    setResumeFile({
-      name: file.name,
-      size: `${sizeInMb} MB`,
-      uploadedAt: 'Just now'
-    });
+    setIsResumeUploading(true);
     setErrorMessage(null);
+
+    try {
+      const res = await uploadResumeApi(file);
+      if (res && res.resume) {
+        const doc = res.resume;
+        setResumeFile({
+          name: file.name,
+          size: `${sizeInMb} MB`,
+          uploadedAt: 'Just now',
+          documentId: doc.documentId,
+          detectedRole: doc.detectedRole || null,
+          skills: doc.parsedData?.skills || null
+        });
+
+        localStorage.setItem('prepnova_resume_id', doc.documentId);
+        localStorage.setItem('prepnova_resume_name', file.name);
+        localStorage.setItem('prepnova_resume_doc', JSON.stringify(doc));
+
+        // If user hasn't set role, offer auto-detected role
+        if (!roleInput.trim() && doc.detectedRole) {
+          setRoleInput(doc.detectedRole);
+        }
+      }
+    } catch (err) {
+      // Fallback for offline mode or demo
+      setResumeFile({
+        name: file.name,
+        size: `${sizeInMb} MB`,
+        uploadedAt: 'Local buffer',
+        documentId: `local_resume_${Date.now()}`
+      });
+      localStorage.setItem('prepnova_resume_name', file.name);
+    } finally {
+      setIsResumeUploading(false);
+    }
   };
 
   const handleRemoveResume = () => {
     setResumeFile(null);
+    localStorage.removeItem('prepnova_resume_id');
+    localStorage.removeItem('prepnova_resume_doc');
+    localStorage.removeItem('prepnova_resume_name');
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -158,7 +264,7 @@ export default function SessionSetup() {
     }
   };
 
-  const processJdFile = (file) => {
+  const processJdFile = async (file) => {
     if (!file) return;
 
     // Check file format - Accept only .pdf
@@ -175,68 +281,85 @@ export default function SessionSetup() {
     }
 
     setErrorMessage(null);
-    setJdUploadProgress(25);
+    setJdUploadProgress(20);
 
     const sizeInMb = (file.size / (1024 * 1024)).toFixed(1);
 
-    // Simulate animated upload & text extraction
-    setTimeout(() => {
-      setJdUploadProgress(65);
-      setTimeout(() => {
-        setJdUploadProgress(100);
-        setTimeout(() => {
-          setJdUploadProgress(null);
-          setJdFile({
-            name: file.name,
-            size: `${sizeInMb} MB`,
-            uploadedAt: 'Just now'
-          });
+    try {
+      setJdUploadProgress(60);
+      const res = await uploadJdApi(file, file.name);
+      setJdUploadProgress(100);
 
-          // Extract text representation from PDF and populate job description
-          const extractedText = `Target Role: ${roleInput || 'Senior Software Engineer'}
-Department: Engineering & Product Development
-Position Summary:
-We are looking for a skilled engineer to contribute to our mission-critical platform architectures, design resilient backend APIs, and collaborate on user-centric applications.
+      const jdDoc = res.job_description || res.jd || {};
+      setJdFile({
+        name: file.name,
+        size: `${sizeInMb} MB`,
+        uploadedAt: 'Just now',
+        documentId: jdDoc.documentId || `jd_${Date.now()}`,
+        roleTitle: jdDoc.parsedData?.role_title || jdDoc.parsedData?.title || null
+      });
 
-Key Responsibilities:
-• Architect, implement, and maintain high-scale web applications and distributed microservices.
-• Partner with product managers, design leads, and engineering teams to translate requirements into robust technical specifications.
-• Advocate for code quality, comprehensive automated testing, and CI/CD best practices.
-• Identify and eliminate performance bottlenecks across system layers and databases.
+      if (jdDoc.documentId) {
+        localStorage.setItem('prepnova_jd_id', jdDoc.documentId);
+        localStorage.setItem('prepnova_jd_doc', JSON.stringify(jdDoc));
+      }
+      localStorage.setItem('prepnova_jd_file_name', file.name);
 
-Qualifications & Requirements:
-• 3+ years of professional software engineering experience.
-• Hands-on proficiency in modern frameworks (React, TypeScript, Node.js, Go, or Python).
-• Practical understanding of relational databases, caching systems, and distributed system fundamentals.
-• Strong problem-solving abilities and clear technical communication.`;
+      if (jdDoc.rawText) {
+        setJobDescription(jdDoc.rawText);
+      }
+      setJdExtractSuccess(true);
 
-          // If no custom text was typed, or to populate extracted content
-          setJobDescription(extractedText);
-          setJdExtractSuccess(true);
-        }, 300);
-      }, 400);
-    }, 300);
+      // Auto-populate role if empty
+      const detectedJdRole = jdDoc.parsedData?.role_title || jdDoc.parsedData?.title;
+      if (!roleInput.trim() && detectedJdRole) {
+        setRoleInput(detectedJdRole);
+      }
+    } catch (err) {
+      // Fallback
+      setJdFile({
+        name: file.name,
+        size: `${sizeInMb} MB`,
+        uploadedAt: 'Uploaded'
+      });
+      localStorage.setItem('prepnova_jd_file_name', file.name);
+      setJdExtractSuccess(true);
+    } finally {
+      setTimeout(() => setJdUploadProgress(null), 400);
+    }
   };
 
   const handleRemoveJdFile = () => {
     setJdFile(null);
     setJdExtractSuccess(false);
+    localStorage.removeItem('prepnova_jd_id');
+    localStorage.removeItem('prepnova_jd_doc');
+    localStorage.removeItem('prepnova_jd_file_name');
     if (jdFileInputRef.current) {
       jdFileInputRef.current.value = '';
     }
   };
 
-  // Continue validation
+  // Continue validation according to the exact 7-case matrix
   const isAnySelected = sources.general || sources.resume || sources.jobDescription || sources.role;
 
-  const handleContinue = () => {
+  const handleContinue = async () => {
     if (!isAnySelected) {
       setErrorMessage('Please select at least one preparation source or choose General Interview.');
       return;
     }
 
+    // Role is compulsory ONLY if Role is checked OR if neither resume nor JD is provided
+    const hasResumeSource = sources.resume && resumeFile;
+    const hasJdSource = sources.jobDescription && (Boolean(jobDescription && jobDescription.trim()) || Boolean(jdFile));
+
     if (sources.role && !roleInput.trim()) {
-      setErrorMessage('Please enter or select a job role.');
+      setErrorMessage('Please select or enter a target role.');
+      return;
+    }
+
+    if (!hasResumeSource && !hasJdSource && !roleInput.trim() && !sources.general) {
+      setErrorMessage('Please enter or select a target role to proceed.');
       return;
     }
 
@@ -245,13 +368,24 @@ Qualifications & Requirements:
       return;
     }
 
-    // Job Description requirement is satisfied if either text is entered OR a PDF has been uploaded and parsed
     if (sources.jobDescription) {
       const hasText = jobDescription && jobDescription.trim().length > 0;
       const hasPdf = jdFile !== null;
       if (!hasText && !hasPdf) {
         setErrorMessage('Please provide a job description by pasting text or uploading a PDF.');
         return;
+      }
+
+      // If user pasted raw text but hasn't uploaded JD to backend, upload it now
+      if (hasText && !jdFile?.documentId) {
+        try {
+          const res = await uploadJdApi(jobDescription.trim());
+          const doc = res.job_description || res.jd;
+          if (doc?.documentId) {
+            localStorage.setItem('prepnova_jd_id', doc.documentId);
+            localStorage.setItem('prepnova_jd_doc', JSON.stringify(doc));
+          }
+        } catch (e) { /* ignore */ }
       }
     }
 
@@ -262,35 +396,69 @@ Qualifications & Requirements:
     if (sources.jobDescription) activeSourcesList.push('job_description');
     if (sources.role) activeSourcesList.push('role');
 
-    const effectiveRole = sources.general 
-      ? 'General Practice Candidate' 
-      : (roleInput.trim() || 'Software Engineer');
+    // Resolve effective role (Never force default "Software Engineer")
+    let effectiveRole = roleInput.trim();
+    if (!effectiveRole && jdFile?.roleTitle) {
+      effectiveRole = jdFile.roleTitle;
+    }
+    if (!effectiveRole && resumeFile?.detectedRole) {
+      effectiveRole = resumeFile.detectedRole;
+    }
+    if (!effectiveRole && sources.general) {
+      effectiveRole = 'General Practice Candidate';
+    }
+
+    // Resolve exact 7-case sessionMode
+    let sessionMode = 'role';
+    if (sources.general) {
+      sessionMode = 'role';
+    } else if (sources.resume && sources.jobDescription && sources.role) {
+      sessionMode = 'resume_jd_role';
+    } else if (sources.resume && sources.jobDescription) {
+      sessionMode = 'resume_jd';
+    } else if (sources.resume && sources.role) {
+      sessionMode = 'resume_role';
+    } else if (sources.resume) {
+      sessionMode = 'resume';
+    } else if (sources.jobDescription && sources.role) {
+      sessionMode = 'role_jd';
+    } else if (sources.jobDescription) {
+      sessionMode = 'jd';
+    } else if (sources.role) {
+      sessionMode = 'role';
+    }
 
     localStorage.setItem('prepnova_sources', JSON.stringify(activeSourcesList));
     localStorage.setItem('prepnova_role', effectiveRole);
     localStorage.setItem('prepnova_mode', sources.general ? 'general' : 'flexible');
+    localStorage.setItem('prepnova_session_mode', sessionMode);
 
-    // Prioritize edited text if present, or JD file name
-    if (sources.jobDescription) {
-      if (jobDescription.trim()) {
-        localStorage.setItem('prepnova_job_description', jobDescription.trim());
-      }
-      if (jdFile) {
-        localStorage.setItem('prepnova_jd_file_name', jdFile.name);
-      }
-    } else {
-      localStorage.removeItem('prepnova_job_description');
-      localStorage.removeItem('prepnova_jd_file_name');
+    // Maintain active document IDs
+    const activeResumeId = sources.resume ? (resumeFile?.documentId || localStorage.getItem('prepnova_resume_id') || '') : '';
+    const activeJdId = sources.jobDescription ? (jdFile?.documentId || localStorage.getItem('prepnova_jd_id') || '') : '';
+
+    if (resumeFile?.documentId) {
+      localStorage.setItem('prepnova_resume_id', resumeFile.documentId);
+    }
+    if (jdFile?.documentId) {
+      localStorage.setItem('prepnova_jd_id', jdFile.documentId);
     }
 
-    if (sources.resume && resumeFile) {
-      localStorage.setItem('prepnova_resume_name', resumeFile.name);
-    } else {
-      localStorage.removeItem('prepnova_resume_name');
+    if (sources.jobDescription && jobDescription.trim()) {
+      localStorage.setItem('prepnova_job_description', jobDescription.trim());
     }
 
     // Navigate to Step 2: Customize Interview
-    navigate('/customize');
+    navigate('/customize', {
+      state: {
+        role: effectiveRole,
+        resumeId: activeResumeId,
+        jdId: activeJdId,
+        mode: sessionMode,
+        resumeDoc: sources.resume ? resumeFile : null,
+        jdDoc: sources.jobDescription ? jdFile : null
+      }
+    });
   };
 
   return (
@@ -548,7 +716,14 @@ Qualifications & Requirements:
                   className="hidden"
                 />
 
-                {resumeFile ? (
+                {isResumeUploading ? (
+                  <div className="p-6 rounded-2xl bg-[#EFF6FF] dark:bg-[#102449] border border-[#BFDBFE] dark:border-blue-900/40 flex items-center justify-center gap-3">
+                    <Loader2 className="w-5 h-5 text-[#2563EB] animate-spin" />
+                    <span className="text-sm font-semibold text-[#2563EB] dark:text-[#38BDF8]">
+                      Extracting skills & indexing resume vectors...
+                    </span>
+                  </div>
+                ) : resumeFile ? (
                   /* Uploaded File Pill Card */
                   <div className="p-4 rounded-2xl bg-[#EFF6FF] dark:bg-[#102449] border border-[#BFDBFE] dark:border-blue-900/40 flex items-center justify-between gap-4">
                     <div className="flex items-center gap-3.5 min-w-0">
@@ -560,7 +735,7 @@ Qualifications & Requirements:
                           {resumeFile.name}
                         </p>
                         <p className="text-xs text-[#64748B] dark:text-[#94A3B8]">
-                          {resumeFile.size} • Ready for analysis
+                          {resumeFile.size} {resumeFile.detectedRole ? `• Detected Role: ${resumeFile.detectedRole}` : '• Ready for analysis'}
                         </p>
                       </div>
                     </div>

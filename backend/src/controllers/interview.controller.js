@@ -143,32 +143,67 @@ exports.startInterview = async (req, res, next) => {
       return res.status(401).json({ error: "Authentication required to start an interview." });
     }
 
-    // Determine interview mode according to combination rules
-    let mode = "role";
     let selectedRole = String(role || "").trim();
+    let effectiveResumeId = resumeId;
 
-    if (resumeId && jdId) {
-      mode = "resume_jd";
-    } else if (resumeId) {
-      mode = "resume";
-    } else if (selectedRole && jdId) {
-      mode = "role_jd";
-    } else if (selectedRole) {
-      mode = "role";
-    } else {
-      return res.status(400).json({
-        error: "Insufficient context: Either a target role selection or an uploaded resume is required to start an interview."
-      });
+    // Auto-reuse user's stored active resume from MongoDB if not explicitly passed and not in an explicit non-resume mode
+    const nonResumeExplicitModes = ["role", "jd", "role_jd"];
+    if (!effectiveResumeId && (!req.body.mode || !nonResumeExplicitModes.includes(req.body.mode))) {
+      try {
+        const latestResume = await Resume.findOne({ userId }).sort({ createdAt: -1 });
+        if (latestResume) {
+          effectiveResumeId = latestResume.documentId;
+        }
+      } catch (e) { /* ignore */ }
     }
 
-    if (!selectedRole && resumeId) {
-      // Fetch resume from DB to get candidate name/detected role
-      const resumeDoc = await Resume.findOne({ documentId: resumeId, userId });
-      if (resumeDoc && resumeDoc.detectedRole) {
-        selectedRole = resumeDoc.detectedRole;
+    // 1. Smart Role Resolution Cascade (if user did not specify a role)
+    if (!selectedRole && jdId) {
+      try {
+        const jdDoc = await JobDescription.findOne({ documentId: jdId, userId });
+        if (jdDoc) {
+          selectedRole = jdDoc.parsedData?.role_title || jdDoc.parsedData?.title || jdDoc.title || "";
+        }
+      } catch (e) { /* ignore */ }
+    }
+    if (!selectedRole && effectiveResumeId) {
+      try {
+        const resumeDoc = await Resume.findOne({ documentId: effectiveResumeId, userId });
+        if (resumeDoc) {
+          selectedRole = resumeDoc.detectedRole || resumeDoc.parsedData?.candidate?.targetRole || "";
+        }
+      } catch (e) { /* ignore */ }
+    }
+
+    // 2. All 7 Context Combinations
+    const validModes = ["resume_jd_role", "resume_jd", "resume_role", "resume", "role_jd", "jd", "role"];
+    let mode = req.body.mode && validModes.includes(req.body.mode) ? req.body.mode : null;
+
+    if (!mode) {
+      if (effectiveResumeId && jdId && selectedRole) {
+        mode = "resume_jd_role";
+      } else if (effectiveResumeId && jdId) {
+        mode = "resume_jd";
+      } else if (effectiveResumeId && selectedRole) {
+        mode = "resume_role";
+      } else if (effectiveResumeId) {
+        mode = "resume";
+      } else if (jdId && selectedRole) {
+        mode = "role_jd";
+      } else if (jdId) {
+        mode = "jd";
+      } else if (selectedRole) {
+        mode = "role";
       } else {
-        selectedRole = "Software Engineer";
+        return res.status(400).json({
+          error: "Insufficient context: Please provide a resume, job description, or target role to start your interview."
+        });
       }
+    }
+
+    // Fallback role only if absolutely no role could be resolved from any source
+    if (!selectedRole) {
+      selectedRole = "Candidate";
     }
 
     const selectedLevel = normalizeLevel(level) || "beginner";
@@ -182,7 +217,7 @@ exports.startInterview = async (req, res, next) => {
         role: selectedRole,
         difficulty: selectedLevel,
         mode,
-        resumeId,
+        resumeId: effectiveResumeId,
         jdId,
         focusAreas: Array.isArray(focusAreas) ? focusAreas : []
       });
@@ -223,7 +258,7 @@ exports.startInterview = async (req, res, next) => {
       role: selectedRole,
       difficulty: selectedLevel,
       mode,
-      resumeId: resumeId || null,
+      resumeId: effectiveResumeId || null,
       jdId: jdId || null,
       status: "in_progress",
       totalQuestions,
@@ -361,7 +396,36 @@ exports.followup = async (req, res, next) => {
 
     // Check if interview completed
     if (session.answers.length >= session.totalQuestions) {
-      const finalReport = buildFinalFeedback(session.evaluations);
+      let finalReport;
+      try {
+        const transcriptItems = session.questions.map((q, idx) => ({
+          question_index: idx,
+          question: q.question,
+          answer: session.answers[idx]?.answer || "",
+          difficulty: q.difficulty || session.difficulty,
+          category: q.category || "Technical Concept"
+        }));
+
+        const batchResult = await aiServiceClient.evaluateSession({
+          role: session.role,
+          difficulty: session.difficulty,
+          transcript: transcriptItems
+        });
+
+        finalReport = {
+          finalScore: batchResult.overall_score,
+          rating: batchResult.rating_label,
+          categoryScores: batchResult.category_scores,
+          feedback: batchResult.feedback,
+          strengths: batchResult.strengths,
+          areasOfImprovement: batchResult.areas_of_improvement,
+          evaluations: batchResult.evaluations,
+          completedAt: new Date()
+        };
+      } catch (batchErr) {
+        finalReport = buildFinalFeedback(session.evaluations);
+      }
+
       session.status = "completed";
       session.finalReport = finalReport;
       await session.save();

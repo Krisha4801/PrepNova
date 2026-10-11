@@ -93,7 +93,7 @@ const InterviewSessionSchema = new mongoose.Schema(
     },
     mode: {
       type: String,
-      enum: ["resume", "role", "resume_jd", "role_jd"],
+      enum: ["resume_jd_role", "resume_jd", "resume_role", "resume", "role_jd", "jd", "role"],
       default: "role"
     },
     resumeId: {

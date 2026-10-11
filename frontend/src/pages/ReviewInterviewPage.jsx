@@ -26,11 +26,14 @@ export default function ReviewInterviewPage() {
   const [errorMessage, setErrorMessage] = useState(null);
 
   // Retrieve configured state
-  const role = location.state?.role || localStorage.getItem('prepnova_role') || 'Frontend Developer';
+  const role = location.state?.role || localStorage.getItem('prepnova_role') || 'Candidate';
   const difficulty = location.state?.difficulty || localStorage.getItem('prepnova_difficulty') || 'intermediate';
   const questionCount = location.state?.questionCount || Number(localStorage.getItem('prepnova_question_count')) || 6;
   const interviewMode = location.state?.interviewMode || localStorage.getItem('prepnova_mode') || 'Text';
-  const selectedSkills = location.state?.selectedSkills || ['React.js', 'JavaScript (ES6+)', 'REST APIs'];
+  const selectedSkills = location.state?.selectedSkills || JSON.parse(localStorage.getItem('prepnova_skills') || '[]');
+  const resumeId = location.state?.resumeId || localStorage.getItem('prepnova_resume_id') || null;
+  const jdId = location.state?.jdId || localStorage.getItem('prepnova_jd_id') || null;
+  const mode = location.state?.mode || localStorage.getItem('prepnova_session_mode') || null;
 
   const handleLaunch = async () => {
     setIsStarting(true);
@@ -47,7 +50,12 @@ export default function ReviewInterviewPage() {
         body: JSON.stringify({
           name: user?.name || 'Candidate',
           role: role,
-          level: difficulty.toLowerCase()
+          level: difficulty.toLowerCase(),
+          mode: mode || undefined,
+          resumeId: resumeId || null,
+          jdId: jdId || null,
+          maxQuestions: questionCount,
+          focusAreas: selectedSkills
         })
       });
 
@@ -58,23 +66,21 @@ export default function ReviewInterviewPage() {
         }
         navigate(`/interview/${data.sessionId || 'session'}`, {
           state: {
-            role,
+            role: data.matchedRole || role,
             difficulty,
             questionCount,
             interviewMode,
-            sessionId: data.sessionId
+            sessionId: data.sessionId,
+            firstQuestion: data.question,
+            resumeId,
+            jdId
           }
         });
       } else {
-        // Navigate with fallback session
-        navigate('/interview', {
-          state: {
-            role,
-            difficulty,
-            questionCount,
-            interviewMode
-          }
-        });
+        const errData = await response.json().catch(() => ({}));
+        setErrorMessage(errData.error || 'Failed to start interview session. Please try again.');
+        setIsStarting(false);
+        return;
       }
     } catch (err) {
       console.warn('Network issue starting interview, continuing with client session:', err);
@@ -99,7 +105,7 @@ export default function ReviewInterviewPage() {
         <div className="flex items-center justify-between px-2 text-xs font-semibold text-slate-400">
           <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
             <span className="w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[11px]"><Check className="w-3 h-3" /></span>
-            <span>Role & Discipline</span>
+            <span>Source & Role Setup</span>
           </div>
           <ChevronRight className="w-4 h-4 text-slate-300 dark:text-slate-700" />
           <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
@@ -140,6 +146,13 @@ export default function ReviewInterviewPage() {
             </div>
 
             <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800">
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Context Mode</span>
+              <span className="text-sm font-bold text-slate-900 dark:text-slate-100 mt-1 block capitalize">
+                {mode ? mode.replace(/_/g, ' + ') : 'Auto-detected'}
+              </span>
+            </div>
+
+            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800">
               <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Difficulty Level</span>
               <span className="text-sm font-bold text-slate-900 dark:text-slate-100 mt-1 block capitalize">{difficulty}</span>
             </div>
@@ -147,14 +160,6 @@ export default function ReviewInterviewPage() {
             <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800">
               <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Session Volume</span>
               <span className="text-sm font-bold text-slate-900 dark:text-slate-100 mt-1 block">{questionCount} Questions</span>
-            </div>
-
-            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800">
-              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Interaction Mode</span>
-              <span className="text-sm font-bold text-slate-900 dark:text-slate-100 mt-1 block flex items-center gap-1.5">
-                {interviewMode === 'Voice' ? <Mic className="w-3.5 h-3.5 text-indigo-600" /> : <FileText className="w-3.5 h-3.5 text-indigo-600" />}
-                <span>{interviewMode} Mode</span>
-              </span>
             </div>
           </div>
 

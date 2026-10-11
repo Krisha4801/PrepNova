@@ -36,10 +36,10 @@ export default function InterviewPage() {
   const { user } = useAuth();
 
   // Retrieve customized configuration from location state or localStorage
-  const role = location.state?.role || localStorage.getItem('prepnova_role') || 'Frontend Developer';
+  const role = location.state?.role || localStorage.getItem('prepnova_role') || 'Candidate';
   const difficulty = location.state?.difficulty || localStorage.getItem('prepnova_difficulty') || 'Intermediate';
-  const totalQuestions = location.state?.questionCount || 6;
-  const initialMode = location.state?.interviewMode || 'Text';
+  const totalQuestions = location.state?.questionCount || Number(localStorage.getItem('prepnova_question_count')) || 6;
+  const initialMode = location.state?.interviewMode || localStorage.getItem('prepnova_mode') || 'Text';
 
   // Session & Question State
   const [sessionId, setSessionId] = useState(paramSessionId || localStorage.getItem('prepnova_session_id') || '');
@@ -123,16 +123,32 @@ export default function InterviewPage() {
     return `${pad(mins)}:${pad(secs)}`;
   };
 
-  // Start Session with Backend on Mount
+  // Start Session with Backend on Mount (if not already initiated by Review page)
   useEffect(() => {
     let isMounted = true;
+
+    // If session was already launched and passed from Review page
+    if (location.state?.firstQuestion && location.state?.sessionId) {
+      setSessionId(location.state.sessionId);
+      setQuestionText(location.state.firstQuestion);
+      return;
+    }
+
     const initSession = async () => {
       setLoading(true);
       try {
+        const resumeId = location.state?.resumeId || localStorage.getItem('prepnova_resume_id') || null;
+        const jdId = location.state?.jdId || localStorage.getItem('prepnova_jd_id') || null;
+        const focusAreas = location.state?.selectedSkills || JSON.parse(localStorage.getItem('prepnova_skills') || '[]');
+
         const data = await startInterviewApi({
           name: user?.name || 'Candidate',
           role: role,
-          level: difficulty.toLowerCase()
+          level: difficulty.toLowerCase(),
+          resumeId,
+          jdId,
+          maxQuestions: totalQuestions,
+          focusAreas
         });
 
         if (isMounted) {
@@ -146,7 +162,7 @@ export default function InterviewPage() {
         }
       } catch (err) {
         if (isMounted) {
-          setQuestionText(`Explain the core architectural principles and state lifecycle in ${role}.`);
+          setQuestionText(`Explain the core architectural principles and problem-solving patterns relevant to ${role}.`);
         }
       } finally {
         if (isMounted) setLoading(false);

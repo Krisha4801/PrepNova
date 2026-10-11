@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   Upload, 
   FileText, 
@@ -14,9 +14,12 @@ import {
   Loader2, 
   ArrowRight,
   ShieldCheck,
-  Tag
+  Tag,
+  Play
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import WorkspaceLayout from '../components/layout/WorkspaceLayout';
+import { uploadResumeApi, getMyResumesApi } from '../lib/api';
 
 export default function ResumeAnalysisPage() {
   const [activeTab, setActiveTab] = useState('suggestions'); // 'suggestions' | 'keywords' | 'structure'
@@ -25,14 +28,60 @@ export default function ResumeAnalysisPage() {
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef(null);
 
-  // Resume Data State
+  // Resume Data State (initializes from active resume if available)
   const [resumeData, setResumeData] = useState(() => {
-    const saved = localStorage.getItem('prepnova_uploaded_resume');
-    if (saved) {
-      try { return JSON.parse(saved); } catch (e) { /* ignore */ }
-    }
+    try {
+      const activeDoc = localStorage.getItem('prepnova_resume_doc');
+      if (activeDoc) {
+        const doc = JSON.parse(activeDoc);
+        const sizeStr = typeof doc.fileSize === 'number'
+          ? `${(doc.fileSize / (1024 * 1024)).toFixed(1)} MB`
+          : (doc.size || '1.0 MB');
+        return {
+          fileName: doc.originalFilename || doc.name || 'My_Resume.pdf',
+          fileSize: sizeStr,
+          uploadDate: doc.createdAt ? new Date(doc.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Active Resume',
+          atsScore: doc.atsScore || 85,
+          status: 'Parsed',
+          documentId: doc.documentId,
+          detectedRole: doc.detectedRole
+        };
+      }
+      const saved = localStorage.getItem('prepnova_uploaded_resume');
+      if (saved) return JSON.parse(saved);
+    } catch (e) { /* ignore */ }
     return null;
   });
+
+  // Fetch active resume from MongoDB on mount if not loaded
+  useEffect(() => {
+    let isMounted = true;
+    const fetchActiveResume = async () => {
+      try {
+        const res = await getMyResumesApi();
+        if (isMounted && res.resumes && res.resumes.length > 0) {
+          const latest = res.resumes[0];
+          const parsed = {
+            fileName: latest.originalFilename,
+            fileSize: `${(latest.fileSize / (1024 * 1024)).toFixed(1)} MB`,
+            uploadDate: new Date(latest.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+            atsScore: latest.atsScore || 85,
+            status: 'Parsed',
+            documentId: latest.documentId,
+            detectedRole: latest.detectedRole
+          };
+          setResumeData(parsed);
+          localStorage.setItem('prepnova_resume_id', latest.documentId);
+          localStorage.setItem('prepnova_resume_doc', JSON.stringify(latest));
+          localStorage.setItem('prepnova_resume_name', latest.originalFilename);
+          localStorage.setItem('prepnova_uploaded_resume', JSON.stringify(parsed));
+        }
+      } catch (err) { /* silent fallback */ }
+    };
+
+    fetchActiveResume();
+    return () => { isMounted = false; };
+  }, []);
 
   const suggestions = [
     {
@@ -74,7 +123,7 @@ export default function ResumeAnalysisPage() {
     'Docker', 'GraphQL', 'AWS / Cloud', 'CI/CD Pipelines', 'Redis'
   ];
 
-  const handleFile = (file) => {
+  const handleFile = async (file) => {
     if (!file) return;
 
     const validExtensions = ['.pdf', '.docx'];
@@ -93,22 +142,43 @@ export default function ResumeAnalysisPage() {
     }
 
     setIsAnalyzing(true);
-    setToastMessage(`Reading ${file.name}...`);
+    setToastMessage(`Processing & indexing ${file.name}...`);
 
-    setTimeout(() => {
+    try {
+      const res = await uploadResumeApi(file);
+      const doc = res.resume || {};
       const parsedResume = {
+        fileName: file.name,
+        fileSize: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
+        uploadDate: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+        atsScore: doc.atsScore || 85,
+        status: 'Parsed',
+        documentId: doc.documentId,
+        detectedRole: doc.detectedRole
+      };
+      setResumeData(parsedResume);
+      localStorage.setItem('prepnova_uploaded_resume', JSON.stringify(parsedResume));
+      if (doc.documentId) {
+        localStorage.setItem('prepnova_resume_id', doc.documentId);
+        localStorage.setItem('prepnova_resume_doc', JSON.stringify(doc));
+        localStorage.setItem('prepnova_resume_name', file.name);
+      }
+      setToastMessage('Resume parsed and saved as active resume.');
+    } catch (err) {
+      const fallback = {
         fileName: file.name,
         fileSize: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
         uploadDate: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
         atsScore: 84,
         status: 'Parsed'
       };
-      setResumeData(parsedResume);
-      localStorage.setItem('prepnova_uploaded_resume', JSON.stringify(parsedResume));
+      setResumeData(fallback);
+      localStorage.setItem('prepnova_uploaded_resume', JSON.stringify(fallback));
+      setToastMessage('Document parsed locally.');
+    } finally {
       setIsAnalyzing(false);
-      setToastMessage('Document parsed successfully.');
       setTimeout(() => setToastMessage(null), 3000);
-    }, 600);
+    }
   };
 
   const handleDrop = (e) => {
@@ -121,6 +191,9 @@ export default function ResumeAnalysisPage() {
   const handleRemoveResume = () => {
     setResumeData(null);
     localStorage.removeItem('prepnova_uploaded_resume');
+    localStorage.removeItem('prepnova_resume_id');
+    localStorage.removeItem('prepnova_resume_doc');
+    localStorage.removeItem('prepnova_resume_name');
   };
 
   return (
@@ -225,6 +298,13 @@ export default function ResumeAnalysisPage() {
               </div>
 
               <div className="flex items-center gap-2 shrink-0">
+                <Link
+                  to="/start-interview"
+                  className="btn-primary text-xs flex items-center gap-1.5"
+                >
+                  <Play className="w-3.5 h-3.5 fill-white" />
+                  <span>Start Mock with this Resume</span>
+                </Link>
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}

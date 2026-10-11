@@ -99,12 +99,14 @@ export default function RoleJobPage() {
       localStorage.setItem('prepnova_jd_text', jobDescription.trim());
     }
 
+    const activeResumeId = localStorage.getItem('prepnova_resume_id');
     navigate('/customize', {
       state: {
         role: selectedRole.trim(),
         industry,
         experienceLevel,
-        jobDescription: jobDescription.trim() || undefined
+        jobDescription: jobDescription.trim() || undefined,
+        resumeId: activeResumeId || undefined
       }
     });
   };

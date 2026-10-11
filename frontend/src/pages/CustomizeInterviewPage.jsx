@@ -21,7 +21,10 @@ export default function CustomizeInterviewPage() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const targetRole = location.state?.role || localStorage.getItem('prepnova_role') || 'Frontend Developer';
+  const targetRole = location.state?.role || localStorage.getItem('prepnova_role') || 'Candidate';
+  const resumeId = location.state?.resumeId || localStorage.getItem('prepnova_resume_id') || '';
+  const jdId = location.state?.jdId || localStorage.getItem('prepnova_jd_id') || '';
+  const mode = location.state?.mode || localStorage.getItem('prepnova_session_mode') || 'role';
 
   // Section 1: Types
   const [types, setTypes] = useState({
@@ -35,19 +38,72 @@ export default function CustomizeInterviewPage() {
   const [difficulty, setDifficulty] = useState('intermediate');
 
   // Section 3: Question Count
-  const [questionCount, setQuestionCount] = useState(6);
+  const [questionCount, setQuestionCount] = useState(() => {
+    return Number(localStorage.getItem('prepnova_question_count')) || 6;
+  });
 
   // Section 4: Mode
   const [interviewMode, setInterviewMode] = useState('Text');
 
-  // Section 5: Selected Skills
-  const availableSkills = useMemo(() => [
-    'JavaScript (ES6+)', 'React.js', 'Node.js', 'TypeScript', 'REST APIs', 
-    'System Architecture', 'SQL & Databases', 'Testing / Jest', 'Git & CI/CD', 
-    'State Management', 'Docker / Containers', 'Performance & Caching'
-  ], []);
+  // Section 5: Dynamically derived skills from uploaded Resume and JD
+  const availableSkills = useMemo(() => {
+    const list = new Set();
 
-  const [selectedSkills, setSelectedSkills] = useState(['React.js', 'JavaScript (ES6+)', 'REST APIs']);
+    // 1. Extract from Resume (if present in state or localStorage)
+    try {
+      const resumeRaw = location.state?.resumeDoc || localStorage.getItem('prepnova_resume_doc');
+      const resumeObj = typeof resumeRaw === 'string' ? JSON.parse(resumeRaw) : resumeRaw;
+      const skillsObj = resumeObj?.parsedData?.skills || resumeObj?.skills;
+      if (skillsObj) {
+        if (Array.isArray(skillsObj)) {
+          skillsObj.forEach(s => list.add(String(s)));
+        } else if (typeof skillsObj === 'object') {
+          Object.values(skillsObj).forEach(val => {
+            if (Array.isArray(val)) val.forEach(s => list.add(String(s)));
+            else if (typeof val === 'string') list.add(val);
+          });
+        }
+      }
+    } catch (e) { /* ignore */ }
+
+    // 2. Extract from Job Description (if present)
+    try {
+      const jdRaw = location.state?.jdDoc || localStorage.getItem('prepnova_jd_doc');
+      const jdObj = typeof jdRaw === 'string' ? JSON.parse(jdRaw) : jdRaw;
+      const jdSkills = jdObj?.parsedData?.required_skills || jdObj?.parsedData?.skills;
+      if (Array.isArray(jdSkills)) {
+        jdSkills.forEach(s => list.add(String(s)));
+      }
+    } catch (e) { /* ignore */ }
+
+    if (list.size > 0) {
+      return Array.from(list).slice(0, 16);
+    }
+
+    // 3. Fallback skills tailored to selected role domain (instead of generic web dev)
+    const roleLower = String(targetRole || '').toLowerCase();
+    if (roleLower.includes('python') || roleLower.includes('data') || roleLower.includes('ai') || roleLower.includes('ml')) {
+      return ['Python', 'SQL & Databases', 'Pandas & NumPy', 'Machine Learning', 'Data Pipelines', 'FastAPI', 'Docker', 'Statistical Analysis'];
+    }
+    if (roleLower.includes('backend') || roleLower.includes('cloud') || roleLower.includes('devops')) {
+      return ['System Architecture', 'Node.js / Express', 'Microservices', 'REST & gRPC APIs', 'Docker & Kubernetes', 'PostgreSQL / SQL', 'Redis & Caching', 'CI/CD Pipelines'];
+    }
+    if (roleLower.includes('qa') || roleLower.includes('test')) {
+      return ['Automated Testing', 'Jest / Cypress', 'API Testing', 'Performance Benchmarking', 'Test-Driven Development (TDD)', 'Bug Tracking & Lifecycle'];
+    }
+    if (roleLower.includes('product') || roleLower.includes('manager')) {
+      return ['Product Strategy', 'Roadmapping', 'Agile & Scrum', 'User Story Mapping', 'Data-Driven Decision Making', 'Cross-Functional Leadership'];
+    }
+    return [
+      'JavaScript (ES6+)', 'React.js', 'TypeScript', 'Node.js', 'REST APIs', 
+      'System Architecture', 'SQL & Databases', 'Testing / Jest', 'Git & CI/CD', 
+      'State Management', 'Docker / Containers', 'Performance & Caching'
+    ];
+  }, [targetRole, location.state]);
+
+  const [selectedSkills, setSelectedSkills] = useState(() => {
+    return availableSkills.slice(0, Math.min(4, availableSkills.length));
+  });
 
   const toggleSkill = (skill) => {
     if (selectedSkills.includes(skill)) {
@@ -61,6 +117,7 @@ export default function CustomizeInterviewPage() {
     localStorage.setItem('prepnova_difficulty', difficulty);
     localStorage.setItem('prepnova_question_count', String(questionCount));
     localStorage.setItem('prepnova_mode', interviewMode);
+    localStorage.setItem('prepnova_skills', JSON.stringify(selectedSkills));
 
     navigate('/review', {
       state: {
@@ -69,7 +126,10 @@ export default function CustomizeInterviewPage() {
         questionCount,
         interviewMode,
         selectedSkills,
-        types
+        types,
+        resumeId,
+        jdId,
+        mode
       }
     });
   };
@@ -82,7 +142,7 @@ export default function CustomizeInterviewPage() {
         <div className="flex items-center justify-between px-2 text-xs font-semibold text-slate-400">
           <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
             <span className="w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[11px]"><Check className="w-3 h-3" /></span>
-            <span>Role & Discipline</span>
+            <span>Source & Role Setup</span>
           </div>
           <ChevronRight className="w-4 h-4 text-slate-300 dark:text-slate-700" />
           <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
@@ -233,11 +293,11 @@ export default function CustomizeInterviewPage() {
           {/* Action Navigation */}
           <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-800">
             <Link
-              to="/role-job"
+              to="/start-interview"
               className="btn-secondary text-xs"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
-              <span>Back: Role</span>
+              <span>Back: Setup</span>
             </Link>
 
             <button

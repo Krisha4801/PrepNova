@@ -11,7 +11,10 @@ from app.schemas.interview import (
     GeneratedQuestion,
     AnswerEvaluation,
     GenerateQuestionRequest,
-    EvaluateAnswerRequest
+    EvaluateAnswerRequest,
+    EvaluateSessionRequest,
+    SessionEvaluationResult,
+    EvaluatedTurn
 )
 from app.services.llm.client import LLMClient
 from app.services.vectorstore.chroma_store import ChromaStore
@@ -69,17 +72,24 @@ def validate_interview_mode_node(state: QuestionState) -> Dict[str, Any]:
     has_role = bool(state.role and state.role.strip())
     has_jd = bool(state.jd_id and state.user_id)
 
-    if has_resume and has_jd:
+    # All 7 Context Combinations:
+    if has_resume and has_jd and has_role:
+        mode = InterviewMode.RESUME_JD_ROLE.value
+    elif has_resume and has_jd:
         mode = InterviewMode.RESUME_JD.value
+    elif has_resume and has_role:
+        mode = InterviewMode.RESUME_ROLE.value
     elif has_resume:
         mode = InterviewMode.RESUME.value
     elif has_role and has_jd:
         mode = InterviewMode.ROLE_JD.value
+    elif has_jd:
+        mode = InterviewMode.JD.value
     elif has_role:
         mode = InterviewMode.ROLE.value
     else:
         return {
-            "error": "Insufficient context: either a resume upload or a target role selection is required to start an interview.",
+            "error": "Insufficient context: please provide a resume, job description, or target role to start an interview.",
             "validated_mode": "invalid"
         }
 
@@ -93,12 +103,28 @@ def retrieve_context_node(state: QuestionState) -> Dict[str, Any]:
     store = ChromaStore()
     context_chunks = []
     mode = state.validated_mode
-    query = f"{state.role or ''} {' '.join(state.focus_areas)} technical concepts and responsibilities".strip()
+
+    # Dynamic search theme by turn to prevent repetitive chunk retrieval
+    turn_index = len(state.history) + 1
+    themes = [
+        "core technical architecture, systems, and primary stack responsibilities",
+        "hands-on implementation, debugging edge cases, and framework trade-offs",
+        "production workflows, testing, continuous integration, and performance optimization",
+        "resilience, scalability, distributed patterns, and complex technical challenges"
+    ]
+    current_theme = themes[(turn_index - 1) % len(themes)]
+
+    query = f"{state.role or ''} {' '.join(state.focus_areas)} {current_theme}".strip()
 
     try:
-        # Mode 1: Resume or Resume + JD
-        if mode in [InterviewMode.RESUME.value, InterviewMode.RESUME_JD.value]:
-            if state.user_id:
+        # 1. Resume Context (if resume present in mode)
+        if mode in [
+            InterviewMode.RESUME_JD_ROLE.value,
+            InterviewMode.RESUME_JD.value,
+            InterviewMode.RESUME_ROLE.value,
+            InterviewMode.RESUME.value
+        ]:
+            if state.user_id and state.resume_id:
                 results = store.search(
                     query=query,
                     user_id=state.user_id,
@@ -109,33 +135,43 @@ def retrieve_context_node(state: QuestionState) -> Dict[str, Any]:
                     for doc in results["documents"][0]:
                         context_chunks.append(f"[Resume Context]: {doc}")
 
-        # Mode 2: JD (if provided)
-        if mode in [InterviewMode.RESUME_JD.value, InterviewMode.ROLE_JD.value]:
+        # 2. Job Description Context (if JD present in mode)
+        if mode in [
+            InterviewMode.RESUME_JD_ROLE.value,
+            InterviewMode.RESUME_JD.value,
+            InterviewMode.ROLE_JD.value,
+            InterviewMode.JD.value
+        ]:
             if state.user_id and state.jd_id:
                 jd_results = store.search(
                     query=query,
                     user_id=state.user_id,
                     document_id=state.jd_id,
-                    top_k=3
+                    top_k=4
                 )
                 if jd_results and "documents" in jd_results and jd_results["documents"]:
                     for doc in jd_results["documents"][0]:
                         context_chunks.append(f"[Job Description Context]: {doc}")
 
-        # Mode 3: Role Knowledge Base (when no resume or as supplement)
-        if mode in [InterviewMode.ROLE.value, InterviewMode.ROLE_JD.value] or not context_chunks:
+        # 3. Role Knowledge Base (if role present in mode, or as fallback)
+        if mode in [
+            InterviewMode.RESUME_JD_ROLE.value,
+            InterviewMode.RESUME_ROLE.value,
+            InterviewMode.ROLE_JD.value,
+            InterviewMode.ROLE.value
+        ] or not context_chunks:
             target_role = state.role or "Software Engineer"
             role_results = store.search_role(
                 query=query,
                 role=target_role,
-                top_k=4
+                top_k=3
             )
             if role_results and "documents" in role_results and role_results["documents"]:
                 for doc in role_results["documents"][0]:
                     context_chunks.append(f"[Role Knowledge]: {doc}")
 
     except Exception as e:
-        context_chunks.append(f"[Fallback Context]: Core skills and design patterns for {state.role or 'Software Engineer'}")
+        context_chunks.append(f"[Fallback Context]: Core skills, architecture, and responsibilities for {state.role or 'Candidate'}")
 
     grounding_text = "\n\n".join(context_chunks)
     return {"grounding_context": grounding_text}
@@ -146,39 +182,48 @@ def generate_question_node(state: QuestionState) -> Dict[str, Any]:
         return {}
 
     llm = LLMClient().get_llm()
-    role = state.role or "Software Engineer"
+    role = state.role or "Candidate"
     difficulty = state.difficulty or "beginner"
+    turn_num = len(state.history) + 1
 
+    # Include ALL previously asked questions to strictly enforce non-repetition
     previous_questions_text = ""
     if state.history:
-        prev_list = [f"- Q: {h.get('question', '')} (Level: {h.get('level', '')})" for h in state.history[-4:]]
-        previous_questions_text = "Previous questions already asked in this session:\n" + "\n".join(prev_list)
+        prev_list = [f"- Turn {i+1}: {h.get('question', '')}" for i, h in enumerate(state.history) if h.get("question")]
+        previous_questions_text = "Questions ALREADY asked in this session (NEVER repeat or closely rephrase any of these):\n" + "\n".join(prev_list)
 
-    system_prompt = """You are PrepNova's senior technical interviewer.
-Generate a realistic, challenging, and clear interview question strictly grounded in the provided context, target role, and difficulty level.
+    system_prompt = f"""You are PrepNova's senior technical interviewer conducting an adaptive interview.
+Your goal is to generate a realistic, targeted, and clear interview question strictly grounded in the provided context, role, and difficulty level.
+
+STRICT NON-REPETITION RULES:
+- Never repeat a topic, question, or scenario that was already asked in this session.
+- If previous questions asked about architecture, transition into practical debugging, implementation trade-offs, or system edge cases.
+- Progress the interview logically like an experienced interviewer.
+
 You MUST output valid JSON only matching this schema:
-{
+{{
   "question": "string containing the interview question text",
   "category": "Resume-Based | JD-Based | Technical Concept | Scenario-Based | System Design | Debugging | Behavioral",
   "format": "Scenario | Coding | Short Answer | Behavioral",
   "expected_concepts": ["keyword1", "keyword2", "keyword3"],
   "sample_answer_points": "brief description of what a good answer covers"
-}
-Do NOT repeat previously asked questions. Return JSON only with no markdown formatting."""
+}}
+Return JSON only with no markdown formatting."""
 
     user_prompt = f"""Role: {role}
 Difficulty Level: {difficulty}
 Interview Mode: {state.validated_mode}
-Focus Areas: {', '.join(state.focus_areas) if state.focus_areas else 'Core technical skills'}
+Session Turn: #{turn_num}
+Focus Areas: {', '.join(state.focus_areas) if state.focus_areas else 'Core technical skills and responsibilities'}
 
 {previous_questions_text}
 
 Retrieved Grounding Context:
 ---
-{state.grounding_context if state.grounding_context else f'Standard industry standards and expectations for {role}.'}
+{state.grounding_context if state.grounding_context else f'Standard industry responsibilities and expectations for {role}.'}
 ---
 
-Generate exactly one interview question."""
+Generate exactly one new, non-repeating interview question for Turn #{turn_num}."""
 
     try:
         response = llm.invoke([
@@ -190,7 +235,7 @@ Generate exactly one interview question."""
         data = json.loads(raw_content)
 
         generated = GeneratedQuestion(
-            id=f"q_{abs(hash(data.get('question', '')))}",
+            id=f"q_{turn_num}_{abs(hash(data.get('question', '')))}",
             question=data.get("question", f"Explain core principles and architectural trade-offs in {role}."),
             category=data.get("category", "Technical Concept"),
             format=data.get("format", "Scenario"),
@@ -204,15 +249,25 @@ Generate exactly one interview question."""
         return {"output_question": generated}
 
     except Exception as e:
+        fallback_pool = [
+            f"In your work with {role}, how do you approach debugging production failures and ensuring system reliability under pressure?",
+            f"Walk me through a technical trade-off you had to make in a recent {role} project regarding performance versus simplicity.",
+            f"How do you design scalable data flow and state management when building applications for {role}?",
+            f"Can you discuss a scenario where you identified a performance bottleneck or memory leak, and explain how you resolved it?",
+            f"What automated testing and code review practices do you consider essential for high-velocity teams in {role}?",
+            f"How do you handle breaking API changes or backward compatibility when evolving existing systems in {role}?"
+        ]
+        fallback_text = fallback_pool[(turn_num - 1) % len(fallback_pool)]
+
         fallback_question = GeneratedQuestion(
-            id=f"q_fallback_{Date_now_id()}",
-            question=f"In your experience as a {role}, how do you approach debugging production failures and ensuring system reliability?",
-            category="Technical Concept",
+            id=f"q_fallback_{turn_num}_{Date_now_id()}",
+            question=fallback_text,
+            category="Scenario-Based",
             format="Scenario",
             difficulty=difficulty,
-            expected_concepts=[role, "debugging", "reliability"],
+            expected_concepts=[role, "architecture", "trade-offs"],
             grounding_context=state.grounding_context[:400] if state.grounding_context else None,
-            source="fallback",
+            source="fallback_diverse",
             role=role
         )
         return {"output_question": fallback_question}
@@ -364,3 +419,149 @@ def build_evaluation_graph():
     return builder.compile()
 
 evaluation_workflow = build_evaluation_graph()
+
+
+def evaluate_full_session(request: EvaluateSessionRequest) -> SessionEvaluationResult:
+    """
+    Evaluates the entire interview transcript in a single LLM call.
+    Drastically saves token usage and computes holistic feedback.
+    """
+    llm = LLMClient().get_llm()
+    transcript = request.transcript or []
+
+    if not transcript:
+        return SessionEvaluationResult(
+            overall_score=7.0,
+            rating_label="Interview ready",
+            category_scores={"correctness": 7.0, "clarity": 7.0, "depth": 7.0, "relevance": 7.0},
+            feedback="No answers submitted in this session.",
+            strengths=["Session initialized."],
+            areas_of_improvement=["Submit answers to receive personalized feedback."],
+            evaluations=[],
+            source="empty_session"
+        )
+
+    transcript_lines = []
+    for item in transcript:
+        transcript_lines.append(
+            f"Question #{item.question_index + 1} ({item.difficulty}): {item.question}\n"
+            f"Candidate Answer: {item.answer or '[No Answer / Skipped]'}"
+        )
+    formatted_transcript = "\n\n".join(transcript_lines)
+
+    system_prompt = """You are PrepNova's chief technical interviewer evaluating a completed technical interview session.
+Review the complete candidate transcript across all questions.
+Evaluate each question turn and compute the final overall scorecard.
+
+You MUST output valid JSON strictly matching this schema:
+{
+  "overall_score": number (0 to 10 scale),
+  "category_scores": {
+    "correctness": number,
+    "clarity": number,
+    "depth": number,
+    "relevance": number
+  },
+  "feedback": "3-4 sentences summarizing candidate's overall readiness, technical strengths, and main growth area",
+  "strengths": ["specific strength 1", "specific strength 2", "specific strength 3"],
+  "areas_of_improvement": ["actionable advice 1", "actionable advice 2"],
+  "evaluations": [
+    {
+      "question_index": number (0-indexed integer matching the question index),
+      "score": number (0 to 10),
+      "feedback": "1-2 sentences on this specific answer",
+      "correctness": number,
+      "clarity": number,
+      "depth": number
+    }
+  ]
+}
+Return JSON only without any markdown code fences."""
+
+    user_prompt = f"""Role: {request.role}
+Target Difficulty: {request.difficulty}
+Total Questions Completed: {len(transcript)}
+
+Full Interview Transcript:
+===========================
+{formatted_transcript}
+===========================
+
+Evaluate the complete interview session now."""
+
+    try:
+        response = llm.invoke([
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
+        ])
+
+        raw = response.content.replace("```json", "").replace("```", "").strip()
+        data = json.loads(raw)
+
+        overall = max(0.0, min(10.0, float(data.get("overall_score", 7.0))))
+        cat_scores = data.get("category_scores", {})
+        for k in ["correctness", "clarity", "depth", "relevance"]:
+            if k not in cat_scores:
+                cat_scores[k] = overall
+            else:
+                cat_scores[k] = round(max(0.0, min(10.0, float(cat_scores[k]))), 1)
+
+        eval_turns = []
+        raw_evals = data.get("evaluations", [])
+        for idx, item in enumerate(raw_evals):
+            q_idx = int(item.get("question_index", idx))
+            sc = round(max(0.0, min(10.0, float(item.get("score", overall)))), 1)
+            eval_turns.append(EvaluatedTurn(
+                question_index=q_idx,
+                score=sc,
+                feedback=str(item.get("feedback", "Answer evaluated.")),
+                correctness=round(float(item.get("correctness", sc)), 1),
+                clarity=round(float(item.get("clarity", sc)), 1),
+                depth=round(float(item.get("depth", sc)), 1)
+            ))
+
+        # Fallback if evaluations list was missing
+        if not eval_turns and transcript:
+            for idx, item in enumerate(transcript):
+                eval_turns.append(EvaluatedTurn(
+                    question_index=item.question_index,
+                    score=overall,
+                    feedback="Demonstrated technical familiarity with core concepts.",
+                    correctness=overall,
+                    clarity=overall,
+                    depth=overall
+                ))
+
+        return SessionEvaluationResult(
+            overall_score=round(overall, 1),
+            rating_label=get_rating_label(overall),
+            category_scores=cat_scores,
+            feedback=data.get("feedback", f"Completed interview session for {request.role}."),
+            strengths=data.get("strengths", ["Solid technical foundation."]),
+            areas_of_improvement=data.get("areas_of_improvement", ["Continue practicing system trade-offs."]),
+            evaluations=eval_turns,
+            source="batch_llm"
+        )
+
+    except Exception as e:
+        default_score = 7.0
+        fallback_turns = [
+            EvaluatedTurn(
+                question_index=item.question_index,
+                score=default_score,
+                feedback="Good effort. Aim for more precise technical terminology and concrete examples.",
+                correctness=7.0,
+                clarity=7.0,
+                depth=7.0
+            ) for item in transcript
+        ]
+        return SessionEvaluationResult(
+            overall_score=default_score,
+            rating_label=get_rating_label(default_score),
+            category_scores={"correctness": 7.0, "clarity": 7.0, "depth": 7.0, "relevance": 7.0},
+            feedback=f"Candidate successfully completed {len(transcript)} questions for {request.role}.",
+            strengths=["Consistent pacing", "Addressed problem prompts"],
+            areas_of_improvement=["Provide deeper trade-off comparisons in system architecture"],
+            evaluations=fallback_turns,
+            source="fallback_batch"
+        )
