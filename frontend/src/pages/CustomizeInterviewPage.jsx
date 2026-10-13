@@ -21,10 +21,12 @@ export default function CustomizeInterviewPage() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const targetRole = location.state?.role || localStorage.getItem('prepnova_role') || 'Candidate';
+  const mode = location.state?.mode || localStorage.getItem('prepnova_session_mode') || 'role';
+  const roleRequiredModes = ['role', 'resume_role', 'role_jd', 'resume_jd_role'];
+  const isRoleMode = roleRequiredModes.includes(mode);
+  const targetRole = isRoleMode ? (location.state?.role || localStorage.getItem('prepnova_role') || '') : '';
   const resumeId = location.state?.resumeId || localStorage.getItem('prepnova_resume_id') || '';
   const jdId = location.state?.jdId || localStorage.getItem('prepnova_jd_id') || '';
-  const mode = location.state?.mode || localStorage.getItem('prepnova_session_mode') || 'role';
 
   // Section 1: Types
   const [types, setTypes] = useState({
@@ -118,10 +120,15 @@ export default function CustomizeInterviewPage() {
     localStorage.setItem('prepnova_question_count', String(questionCount));
     localStorage.setItem('prepnova_mode', interviewMode);
     localStorage.setItem('prepnova_skills', JSON.stringify(selectedSkills));
+    if (isRoleMode && targetRole) {
+      localStorage.setItem('prepnova_role', targetRole);
+    } else {
+      localStorage.removeItem('prepnova_role');
+    }
 
     navigate('/review', {
       state: {
-        role: targetRole,
+        role: isRoleMode ? targetRole : '',
         difficulty,
         questionCount,
         interviewMode,
@@ -160,7 +167,17 @@ export default function CustomizeInterviewPage() {
         <div className="panel-card space-y-7">
           <div>
             <div className="flex items-center gap-2 text-xs font-semibold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider mb-1">
-              <span>Target: {targetRole}</span>
+              {isRoleMode ? (
+                <span>Target Role: {targetRole || 'Custom Role'}</span>
+              ) : mode === 'resume' ? (
+                <span>Context: Resume-Driven Interview</span>
+              ) : mode === 'jd' ? (
+                <span>Context: Job Description Interview</span>
+              ) : mode === 'resume_jd' ? (
+                <span>Context: Resume + Job Description Match</span>
+              ) : (
+                <span>General Practice</span>
+              )}
             </div>
             <h2 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight">
               Session Configuration

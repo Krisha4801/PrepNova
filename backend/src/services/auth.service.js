@@ -76,7 +76,7 @@ class AuthService {
       password: passwordHash,
       role: role === "admin" ? "admin" : "user",
       userType: userType || "",
-      targetRole: targetRole || "Software Engineer",
+      targetRole: targetRole ? targetRole.trim() : "",
       organization: organization ? organization.trim() : (university ? university.trim() : ""),
       experienceLevel: experienceLevel || "",
       university: university ? university.trim() : "",

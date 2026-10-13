@@ -99,7 +99,7 @@ async function authenticateToken(req, res, next) {
         role: user.role || "user",
         isActive: user.isActive !== false,
         userType: user.userType || "",
-        targetRole: user.targetRole || "Software Engineer",
+        targetRole: user.targetRole || "",
         organization: user.organization || ""
       };
       req.token = token;

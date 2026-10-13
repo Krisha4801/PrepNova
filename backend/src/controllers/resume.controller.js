@@ -45,6 +45,14 @@ exports.extractAndIndexResume = async (req, res, next) => {
       });
     }
 
+    // Extract detected role from candidate target role or latest experience
+    const detectedRole =
+      aiResult.resume?.candidate?.targetRole ||
+      aiResult.resume?.targetRole ||
+      (Array.isArray(aiResult.resume?.experience) && aiResult.resume.experience[0]?.role) ||
+      (Array.isArray(aiResult.resume?.experience) && aiResult.resume.experience[0]?.title) ||
+      null;
+
     // Persist parsed data in MongoDB
     const resumeRecord = await Resume.create({
       userId,
@@ -54,6 +62,7 @@ exports.extractAndIndexResume = async (req, res, next) => {
       mimeType: req.file.mimetype || "application/pdf",
       extractionMethod: aiResult.extraction_method || "pdf_text",
       parsedData: aiResult.resume,
+      detectedRole,
       indexedInChroma: !!aiResult.indexed,
       chunksCount: aiResult.chunks_count || 0
     });

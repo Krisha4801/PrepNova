@@ -33,52 +33,8 @@ const ResumeSchema = new mongoose.Schema(
       default: "pdf_text"
     },
     parsedData: {
-      candidate: {
-        name: { type: String, default: null },
-        email: { type: String, default: null },
-        phone: { type: String, default: null },
-        location: { type: String, default: null }
-      },
-      summary: { type: String, default: null },
-      education: [
-        {
-          degree: String,
-          institution: String,
-          field: String,
-          start_year: String,
-          end_year: String
-        }
-      ],
-      experience: [
-        {
-          company: String,
-          role: String,
-          start_date: String,
-          end_date: String,
-          description: [String],
-          technologies: [String]
-        }
-      ],
-      skills: {
-        programming_languages: [String],
-        frameworks: [String],
-        databases: [String],
-        cloud: [String],
-        ai_ml: [String],
-        tools: [String],
-        other: [String]
-      },
-      projects: [
-        {
-          name: String,
-          description: String,
-          technologies: [String],
-          responsibilities: [String]
-        }
-      ],
-      certifications: [String],
-      achievements: [String],
-      links: [String]
+      type: mongoose.Schema.Types.Mixed,
+      default: {}
     },
     indexedInChroma: {
       type: Boolean,

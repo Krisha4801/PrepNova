@@ -38,24 +38,8 @@ const JobDescriptionSchema = new mongoose.Schema(
       default: null
     },
     parsedData: {
-      job_info: {
-        title: String,
-        company: String,
-        location: String,
-        employment_type: String
-      },
-      requirements: {
-        required_skills: [String],
-        preferred_skills: [String],
-        education: [String],
-        experience: [String]
-      },
-      responsibilities: {
-        items: [String]
-      },
-      technologies: [String],
-      soft_skills: [String],
-      qualifications: [String]
+      type: mongoose.Schema.Types.Mixed,
+      default: {}
     },
     indexedInChroma: {
       type: Boolean,

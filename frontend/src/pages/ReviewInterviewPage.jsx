@@ -26,14 +26,16 @@ export default function ReviewInterviewPage() {
   const [errorMessage, setErrorMessage] = useState(null);
 
   // Retrieve configured state
-  const role = location.state?.role || localStorage.getItem('prepnova_role') || 'Candidate';
+  const mode = location.state?.mode || localStorage.getItem('prepnova_session_mode') || null;
+  const roleRequiredModes = ['role', 'resume_role', 'role_jd', 'resume_jd_role'];
+  const isRoleMode = roleRequiredModes.includes(mode);
+  const role = isRoleMode ? (location.state?.role || localStorage.getItem('prepnova_role') || '') : '';
   const difficulty = location.state?.difficulty || localStorage.getItem('prepnova_difficulty') || 'intermediate';
   const questionCount = location.state?.questionCount || Number(localStorage.getItem('prepnova_question_count')) || 6;
   const interviewMode = location.state?.interviewMode || localStorage.getItem('prepnova_mode') || 'Text';
   const selectedSkills = location.state?.selectedSkills || JSON.parse(localStorage.getItem('prepnova_skills') || '[]');
   const resumeId = location.state?.resumeId || localStorage.getItem('prepnova_resume_id') || null;
   const jdId = location.state?.jdId || localStorage.getItem('prepnova_jd_id') || null;
-  const mode = location.state?.mode || localStorage.getItem('prepnova_session_mode') || null;
 
   const handleLaunch = async () => {
     setIsStarting(true);
@@ -49,7 +51,7 @@ export default function ReviewInterviewPage() {
         },
         body: JSON.stringify({
           name: user?.name || 'Candidate',
-          role: role,
+          role: isRoleMode ? role : (role || undefined),
           level: difficulty.toLowerCase(),
           mode: mode || undefined,
           resumeId: resumeId || null,
@@ -141,8 +143,20 @@ export default function ReviewInterviewPage() {
           {/* Configuration Summary Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800">
-              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Target Role</span>
-              <span className="text-sm font-bold text-slate-900 dark:text-slate-100 mt-1 block">{role}</span>
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                {isRoleMode ? 'Target Role' : 'Interview Focus'}
+              </span>
+              <span className="text-sm font-bold text-slate-900 dark:text-slate-100 mt-1 block">
+                {isRoleMode
+                  ? (role || 'Custom Role')
+                  : mode === 'resume'
+                  ? 'Resume-Driven Evaluation'
+                  : mode === 'jd'
+                  ? 'Job Description Evaluation'
+                  : mode === 'resume_jd'
+                  ? 'Resume & Job Description Match'
+                  : 'General Practice Evaluation'}
+              </span>
             </div>
 
             <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800">
@@ -161,6 +175,24 @@ export default function ReviewInterviewPage() {
               <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Session Volume</span>
               <span className="text-sm font-bold text-slate-900 dark:text-slate-100 mt-1 block">{questionCount} Questions</span>
             </div>
+
+            {resumeId && (
+              <div className="p-4 rounded-xl bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-200/80 dark:border-emerald-900/40">
+                <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider block">Connected Resume</span>
+                <span className="text-sm font-bold text-slate-900 dark:text-slate-100 mt-1 block truncate">
+                  {location.state?.resumeDoc?.name || localStorage.getItem('prepnova_resume_name') || 'Saved Resume'}
+                </span>
+              </div>
+            )}
+
+            {jdId && (
+              <div className="p-4 rounded-xl bg-blue-50/60 dark:bg-blue-950/20 border border-blue-200/80 dark:border-blue-900/40">
+                <span className="text-[11px] font-bold text-blue-700 dark:text-blue-400 uppercase tracking-wider block">Connected Job Description</span>
+                <span className="text-sm font-bold text-slate-900 dark:text-slate-100 mt-1 block truncate">
+                  {location.state?.jdDoc?.name || 'Active Job Description'}
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Focus Competencies */}

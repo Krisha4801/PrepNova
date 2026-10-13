@@ -34,10 +34,14 @@ async def extract_resume(
     index_document: bool = Form(False)
 ):
 
-    if file.content_type != "application/pdf":
+    is_pdf = (
+        (file.filename and file.filename.lower().endswith(".pdf"))
+        or (file.content_type and "pdf" in file.content_type.lower())
+    )
+    if not is_pdf:
         raise HTTPException(
             status_code=400,
-            detail="Only PDF files are supported.",
+            detail="Only PDF files (.pdf) are supported.",
         )
 
     file_id = str(uuid.uuid4())

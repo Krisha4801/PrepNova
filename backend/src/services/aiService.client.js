@@ -233,7 +233,7 @@ class AiServiceClient {
     try {
       const response = await this.httpClient.post("/interview/generate-question", {
         user_id: params.userId || null,
-        role: params.role || "Software Engineer",
+        role: params.role || "",
         difficulty: params.difficulty || "beginner",
         mode: params.mode || null,
         resume_id: params.resumeId || null,

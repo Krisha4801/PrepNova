@@ -4,7 +4,13 @@ const multer = require("multer");
 const storage = multer.memoryStorage();
 
 const fileFilter = (req, file, cb) => {
-  if (file.mimetype === "application/pdf" || file.originalname.toLowerCase().endsWith(".pdf")) {
+  const isPdf =
+    file.mimetype === "application/pdf" ||
+    file.mimetype === "application/x-pdf" ||
+    file.mimetype === "application/octet-stream" ||
+    (file.originalname && file.originalname.toLowerCase().endsWith(".pdf"));
+
+  if (isPdf) {
     cb(null, true);
   } else {
     const error = new Error("Invalid file type. Only PDF documents (.pdf) are supported.");

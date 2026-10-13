@@ -201,9 +201,16 @@ exports.startInterview = async (req, res, next) => {
       }
     }
 
-    // Fallback role only if absolutely no role could be resolved from any source
-    if (!selectedRole) {
-      selectedRole = "Candidate";
+    // 3. For non-role modes (resume, jd, resume_jd), role is NOT required or forced
+    const nonRoleModes = ["resume", "jd", "resume_jd"];
+    if (nonRoleModes.includes(mode)) {
+      if (!selectedRole || selectedRole.toLowerCase() === "software engineer") {
+        selectedRole = mode === "resume" ? "Resume Candidate" : mode === "jd" ? "JD Candidate" : "Candidate";
+      }
+    } else {
+      if (!selectedRole) {
+        selectedRole = "Candidate";
+      }
     }
 
     const selectedLevel = normalizeLevel(level) || "beginner";
@@ -214,7 +221,7 @@ exports.startInterview = async (req, res, next) => {
     try {
       generatedQ = await aiServiceClient.generateInterviewQuestion({
         userId,
-        role: selectedRole,
+        role: nonRoleModes.includes(mode) ? "" : selectedRole,
         difficulty: selectedLevel,
         mode,
         resumeId: effectiveResumeId,

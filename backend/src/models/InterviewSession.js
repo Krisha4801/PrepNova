@@ -83,7 +83,8 @@ const InterviewSessionSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      required: true,
+      required: false,
+      default: "Candidate",
       trim: true
     },
     difficulty: {

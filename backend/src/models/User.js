@@ -59,7 +59,7 @@ const UserSchema = new mongoose.Schema(
     targetRole: {
       type: String,
       trim: true,
-      default: "Software Engineer"
+      default: ""
     },
     experienceLevel: {
       type: String,

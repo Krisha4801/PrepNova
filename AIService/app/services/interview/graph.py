@@ -153,14 +153,15 @@ def retrieve_context_node(state: QuestionState) -> Dict[str, Any]:
                     for doc in jd_results["documents"][0]:
                         context_chunks.append(f"[Job Description Context]: {doc}")
 
-        # 3. Role Knowledge Base (if role present in mode, or as fallback)
-        if mode in [
+        # 3. Role Knowledge Base (only if role is part of the mode and explicitly provided)
+        role_modes = [
             InterviewMode.RESUME_JD_ROLE.value,
             InterviewMode.RESUME_ROLE.value,
             InterviewMode.ROLE_JD.value,
             InterviewMode.ROLE.value
-        ] or not context_chunks:
-            target_role = state.role or "Software Engineer"
+        ]
+        if mode in role_modes and state.role and state.role.strip():
+            target_role = state.role.strip()
             role_results = store.search_role(
                 query=query,
                 role=target_role,

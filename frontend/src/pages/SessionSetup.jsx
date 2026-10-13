@@ -29,11 +29,25 @@ export default function SessionSetup() {
   const jdFileInputRef = useRef(null);
 
   // Selected Sources State (Multi-selection allowed)
-  const [sources, setSources] = useState({
-    resume: true,
-    jobDescription: false,
-    role: true,
-    general: false
+  const [sources, setSources] = useState(() => {
+    try {
+      const savedSources = localStorage.getItem('prepnova_sources');
+      if (savedSources) {
+        const list = JSON.parse(savedSources);
+        return {
+          resume: list.includes('resume'),
+          jobDescription: list.includes('job_description'),
+          role: list.includes('role'),
+          general: list.includes('general')
+        };
+      }
+    } catch (e) { /* ignore */ }
+    return {
+      resume: true,
+      jobDescription: false,
+      role: false,
+      general: false
+    };
   });
 
   // Resume Input State (Initializes from saved user resume if available)
@@ -58,6 +72,7 @@ export default function SessionSetup() {
     return null;
   });
   const [isResumeUploading, setIsResumeUploading] = useState(false);
+  const [isResumeFetching, setIsResumeFetching] = useState(true);
   const [isDragging, setIsDragging] = useState(false);
 
   // Job Description State (Text + PDF tabs)
@@ -82,9 +97,13 @@ export default function SessionSetup() {
   const [jdUploadProgress, setJdUploadProgress] = useState(null);
   const [jdExtractSuccess, setJdExtractSuccess] = useState(false);
 
-  // Role State
+  // Role State (never initialize with hardcoded Software Engineer)
   const [roleInput, setRoleInput] = useState(() => {
-    return localStorage.getItem('prepnova_role') || user?.preferredRole || '';
+    const saved = localStorage.getItem('prepnova_role');
+    if (saved && saved !== 'Software Engineer' && saved !== 'Candidate') return saved;
+    if (user?.preferredRole && user.preferredRole !== 'Software Engineer') return user.preferredRole;
+    if (user?.targetRole && user.targetRole !== 'Software Engineer') return user.targetRole;
+    return '';
   });
   const [errorMessage, setErrorMessage] = useState(null);
 
@@ -92,16 +111,20 @@ export default function SessionSetup() {
   useEffect(() => {
     let isMounted = true;
     const fetchExistingData = async () => {
+      setIsResumeFetching(true);
       try {
         const res = await getMyResumesApi();
         if (isMounted && res.resumes && res.resumes.length > 0) {
           const latest = res.resumes[0];
+          const detectedRole = latest.detectedRole ||
+            (Array.isArray(latest.parsedData?.experience) && latest.parsedData.experience[0]?.role) ||
+            null;
           const formattedResume = {
             name: latest.originalFilename,
-            size: `${(latest.fileSize / (1024 * 1024)).toFixed(1)} MB`,
-            uploadedAt: 'Active Resume',
+            size: typeof latest.fileSize === 'number' ? `${(latest.fileSize / (1024 * 1024)).toFixed(1)} MB` : '1.2 MB',
+            uploadedAt: latest.createdAt ? new Date(latest.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Active Resume',
             documentId: latest.documentId,
-            detectedRole: latest.detectedRole,
+            detectedRole: detectedRole,
             skills: latest.parsedData?.skills
           };
           setResumeFile(formattedResume);
@@ -112,11 +135,15 @@ export default function SessionSetup() {
           // Auto-enable Resume source card since user has an active resume stored
           setSources(prev => ({ ...prev, resume: true }));
 
-          if (!roleInput && latest.detectedRole) {
-            setRoleInput(latest.detectedRole);
+          if (!roleInput && detectedRole) {
+            setRoleInput(detectedRole);
           }
         }
-      } catch (err) { /* silent fallback */ }
+      } catch (err) {
+        console.warn('Could not fetch existing resumes from server:', err);
+      } finally {
+        if (isMounted) setIsResumeFetching(false);
+      }
     };
 
     fetchExistingData();
@@ -183,9 +210,16 @@ export default function SessionSetup() {
   const processResumeFile = async (file) => {
     if (!file) return;
 
+    // Check file format - only PDF is supported by the AI parser
+    const isPdf = file.name.toLowerCase().endsWith('.pdf') || file.type === 'application/pdf';
+    if (!isPdf) {
+      setErrorMessage('Please upload a PDF file (.pdf). Word documents (.docx/.doc) must be saved as PDF first.');
+      return;
+    }
+
     // Check file size (max 5MB)
     if (file.size > 5 * 1024 * 1024) {
-      setErrorMessage('Resume file size exceeds the 5MB limit. Please upload a smaller PDF or DOCX file.');
+      setErrorMessage('Resume file size exceeds the 5MB limit. Please upload a smaller PDF file.');
       return;
     }
 
@@ -197,33 +231,37 @@ export default function SessionSetup() {
       const res = await uploadResumeApi(file);
       if (res && res.resume) {
         const doc = res.resume;
-        setResumeFile({
+        const detectedRole = doc.detectedRole ||
+          (Array.isArray(doc.parsedData?.experience) && doc.parsedData.experience[0]?.role) ||
+          null;
+
+        const formattedResume = {
           name: file.name,
           size: `${sizeInMb} MB`,
           uploadedAt: 'Just now',
           documentId: doc.documentId,
-          detectedRole: doc.detectedRole || null,
+          detectedRole: detectedRole,
           skills: doc.parsedData?.skills || null
-        });
+        };
+        setResumeFile(formattedResume);
 
         localStorage.setItem('prepnova_resume_id', doc.documentId);
         localStorage.setItem('prepnova_resume_name', file.name);
         localStorage.setItem('prepnova_resume_doc', JSON.stringify(doc));
 
+        // Auto-enable Resume source card
+        setSources(prev => ({ ...prev, resume: true }));
+
         // If user hasn't set role, offer auto-detected role
-        if (!roleInput.trim() && doc.detectedRole) {
-          setRoleInput(doc.detectedRole);
+        if (!roleInput.trim() && detectedRole) {
+          setRoleInput(detectedRole);
         }
+      } else {
+        throw new Error('Server response did not include parsed resume details.');
       }
     } catch (err) {
-      // Fallback for offline mode or demo
-      setResumeFile({
-        name: file.name,
-        size: `${sizeInMb} MB`,
-        uploadedAt: 'Local buffer',
-        documentId: `local_resume_${Date.now()}`
-      });
-      localStorage.setItem('prepnova_resume_name', file.name);
+      console.error('Resume upload failed:', err);
+      setErrorMessage(err.message || 'Failed to upload and index resume. Please ensure it is a valid PDF and try again.');
     } finally {
       setIsResumeUploading(false);
     }
@@ -353,12 +391,24 @@ export default function SessionSetup() {
     const hasResumeSource = sources.resume && resumeFile;
     const hasJdSource = sources.jobDescription && (Boolean(jobDescription && jobDescription.trim()) || Boolean(jdFile));
 
-    if (sources.role && !roleInput.trim()) {
+    // Auto-resolve role from resume or JD if role card is selected but input was not manually filled
+    let effectiveRoleInput = roleInput.trim();
+    if (sources.role && !effectiveRoleInput) {
+      if (resumeFile?.detectedRole) {
+        effectiveRoleInput = resumeFile.detectedRole;
+        setRoleInput(effectiveRoleInput);
+      } else if (jdFile?.roleTitle) {
+        effectiveRoleInput = jdFile.roleTitle;
+        setRoleInput(effectiveRoleInput);
+      }
+    }
+
+    if (sources.role && !effectiveRoleInput) {
       setErrorMessage('Please select or enter a target role.');
       return;
     }
 
-    if (!hasResumeSource && !hasJdSource && !roleInput.trim() && !sources.general) {
+    if (!hasResumeSource && !hasJdSource && !effectiveRoleInput && !sources.general) {
       setErrorMessage('Please enter or select a target role to proceed.');
       return;
     }
@@ -396,18 +446,6 @@ export default function SessionSetup() {
     if (sources.jobDescription) activeSourcesList.push('job_description');
     if (sources.role) activeSourcesList.push('role');
 
-    // Resolve effective role (Never force default "Software Engineer")
-    let effectiveRole = roleInput.trim();
-    if (!effectiveRole && jdFile?.roleTitle) {
-      effectiveRole = jdFile.roleTitle;
-    }
-    if (!effectiveRole && resumeFile?.detectedRole) {
-      effectiveRole = resumeFile.detectedRole;
-    }
-    if (!effectiveRole && sources.general) {
-      effectiveRole = 'General Practice Candidate';
-    }
-
     // Resolve exact 7-case sessionMode
     let sessionMode = 'role';
     if (sources.general) {
@@ -428,8 +466,23 @@ export default function SessionSetup() {
       sessionMode = 'role';
     }
 
+    // Role is ONLY used if sources.role is explicitly selected by the user!
+    let effectiveRole = '';
+    if (sources.role) {
+      effectiveRole = roleInput.trim();
+    } else if (sources.general) {
+      effectiveRole = 'General Practice Candidate';
+    } else {
+      // In non-role modes (resume, jd, resume_jd), NEVER force Software Engineer or any role
+      effectiveRole = '';
+    }
+
     localStorage.setItem('prepnova_sources', JSON.stringify(activeSourcesList));
-    localStorage.setItem('prepnova_role', effectiveRole);
+    if (effectiveRole) {
+      localStorage.setItem('prepnova_role', effectiveRole);
+    } else {
+      localStorage.removeItem('prepnova_role');
+    }
     localStorage.setItem('prepnova_mode', sources.general ? 'general' : 'flexible');
     localStorage.setItem('prepnova_session_mode', sessionMode);
 
@@ -549,11 +602,18 @@ export default function SessionSetup() {
                 </div>
               </div>
               <div>
-                <h3 className="text-base font-bold text-[#111827] dark:text-[#F8FAFC] tracking-tight mb-1">
-                  Resume
-                </h3>
-                <p className="text-xs text-[#64748B] dark:text-[#94A3B8] leading-relaxed">
-                  Upload your resume for personalized questions
+                <div className="flex items-center justify-between mb-1">
+                  <h3 className="text-base font-bold text-[#111827] dark:text-[#F8FAFC] tracking-tight">
+                    Resume
+                  </h3>
+                  {resumeFile && (
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
+                      Active
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-[#64748B] dark:text-[#94A3B8] leading-relaxed truncate">
+                  {resumeFile ? resumeFile.name : 'Upload your resume for personalized questions'}
                 </p>
               </div>
             </div>
@@ -694,15 +754,15 @@ export default function SessionSetup() {
                         Resume Upload
                       </h3>
                       <p className="text-xs text-[#64748B] dark:text-[#94A3B8]">
-                        Accept PDF / DOCX (max 5MB)
+                        PDF files only (max 5MB) • Stored in Database & Vector Store
                       </p>
                     </div>
                   </div>
 
-                  {resumeFile && (
+                  {resumeFile && !isResumeFetching && (
                     <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 text-xs font-bold border border-emerald-200 dark:border-emerald-900/40">
                       <CheckCircle2 className="w-3.5 h-3.5" />
-                      Uploaded
+                      Active Resume Ready
                     </span>
                   )}
                 </div>
@@ -712,51 +772,84 @@ export default function SessionSetup() {
                   type="file"
                   ref={fileInputRef}
                   onChange={handleFileChange}
-                  accept=".pdf,.doc,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  accept="application/pdf,.pdf"
                   className="hidden"
                 />
 
-                {isResumeUploading ? (
+                {isResumeFetching ? (
                   <div className="p-6 rounded-2xl bg-[#EFF6FF] dark:bg-[#102449] border border-[#BFDBFE] dark:border-blue-900/40 flex items-center justify-center gap-3">
                     <Loader2 className="w-5 h-5 text-[#2563EB] animate-spin" />
                     <span className="text-sm font-semibold text-[#2563EB] dark:text-[#38BDF8]">
-                      Extracting skills & indexing resume vectors...
+                      Checking for saved resume in database...
                     </span>
                   </div>
+                ) : isResumeUploading ? (
+                  <div className="p-6 rounded-2xl bg-[#EFF6FF] dark:bg-[#102449] border border-[#BFDBFE] dark:border-blue-900/40 flex items-center gap-3">
+                    <Loader2 className="w-5 h-5 text-[#2563EB] animate-spin shrink-0" />
+                    <div>
+                      <p className="text-sm font-bold text-[#2563EB] dark:text-[#38BDF8]">
+                        Uploading & indexing resume vectors...
+                      </p>
+                      <p className="text-xs text-[#64748B] dark:text-[#94A3B8]">
+                        Extracting skills and saving to MongoDB & Vector Store
+                      </p>
+                    </div>
+                  </div>
                 ) : resumeFile ? (
-                  /* Uploaded File Pill Card */
-                  <div className="p-4 rounded-2xl bg-[#EFF6FF] dark:bg-[#102449] border border-[#BFDBFE] dark:border-blue-900/40 flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-3.5 min-w-0">
-                      <div className="w-10 h-10 rounded-xl bg-white dark:bg-[#081A3A] text-[#2563EB] dark:text-[#38BDF8] flex items-center justify-center shrink-0 border border-blue-100 dark:border-white/[0.08]">
-                        <FileCheck2 className="w-5 h-5" />
+                  /* Active Resume Card with Details + Option to Upload New Resume */
+                  <div className="rounded-2xl bg-[#EFF6FF]/60 dark:bg-[#102449]/60 border border-[#BFDBFE] dark:border-blue-900/40 p-5 space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div className="flex items-center gap-3.5 min-w-0">
+                        <div className="w-11 h-11 rounded-xl bg-white dark:bg-[#081A3A] text-[#2563EB] dark:text-[#38BDF8] flex items-center justify-center shrink-0 border border-blue-200 dark:border-white/[0.08] shadow-2xs">
+                          <FileCheck2 className="w-6 h-6" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm sm:text-base font-bold text-[#111827] dark:text-[#F8FAFC] truncate">
+                              {resumeFile.name}
+                            </p>
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-800 shrink-0">
+                              Saved in DB
+                            </span>
+                          </div>
+                          <p className="text-xs text-[#64748B] dark:text-[#94A3B8] mt-0.5">
+                            {resumeFile.size} • {resumeFile.uploadedAt || 'Active'}
+                            {resumeFile.detectedRole && (
+                              <span className="ml-1.5 font-medium text-[#2563EB] dark:text-[#38BDF8]">
+                                • Target: {resumeFile.detectedRole}
+                              </span>
+                            )}
+                          </p>
+                        </div>
                       </div>
-                      <div className="min-w-0">
-                        <p className="text-sm font-bold text-[#111827] dark:text-[#F8FAFC] truncate">
-                          {resumeFile.name}
-                        </p>
-                        <p className="text-xs text-[#64748B] dark:text-[#94A3B8]">
-                          {resumeFile.size} {resumeFile.detectedRole ? `• Detected Role: ${resumeFile.detectedRole}` : '• Ready for analysis'}
-                        </p>
+
+                      {/* Action buttons */}
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-[#2563EB] hover:bg-[#1D4ED8] dark:bg-[#2563EB] dark:hover:bg-[#1D4ED8] rounded-xl shadow-xs transition-colors cursor-pointer"
+                        >
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>Upload New Resume</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleRemoveResume}
+                          className="p-1.5 text-[#64748B] hover:text-rose-600 dark:text-[#94A3B8] dark:hover:text-rose-400 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors cursor-pointer"
+                          title="Remove from selection"
+                          aria-label="Remove uploaded resume"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => fileInputRef.current?.click()}
-                        className="px-3 py-1.5 text-xs font-semibold text-[#2563EB] dark:text-[#38BDF8] hover:bg-white dark:hover:bg-[#081A3A] rounded-lg transition-colors cursor-pointer"
-                      >
-                        Change
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleRemoveResume}
-                        className="p-1.5 text-[#64748B] hover:text-rose-600 dark:text-[#94A3B8] dark:hover:text-rose-400 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors cursor-pointer"
-                        title="Remove file"
-                        aria-label="Remove uploaded resume"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
+                    <div className="pt-3 border-t border-blue-200/60 dark:border-white/[0.06] flex items-center justify-between text-xs text-[#2563EB] dark:text-[#38BDF8]">
+                      <span className="flex items-center gap-1.5 font-medium">
+                        <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                        This resume is linked and ready. You can continue directly or upload a new one above.
+                      </span>
                     </div>
                   </div>
                 ) : (
@@ -776,11 +869,11 @@ export default function SessionSetup() {
                       <Upload className="w-5 h-5" />
                     </div>
                     <p className="text-sm font-bold text-[#111827] dark:text-[#F8FAFC]">
-                      Drag & Drop your resume here, or{' '}
+                      Drag & Drop your resume PDF here, or{' '}
                       <span className="text-[#2563EB] dark:text-[#38BDF8] underline underline-offset-2">browse</span>
                     </p>
                     <p className="text-xs text-[#64748B] dark:text-[#94A3B8] mt-1">
-                      Supports PDF, DOC, DOCX up to 5MB
+                      Supports PDF format only (max 5MB) • Automatically saved to database
                     </p>
                   </div>
                 )}
