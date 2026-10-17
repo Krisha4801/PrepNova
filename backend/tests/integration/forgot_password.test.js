@@ -516,4 +516,40 @@ describe("Production Forgot Password & OTP Password Reset Integration Tests", ()
       assert.ok(resetRes.data.error.includes("no longer exists"));
     });
   });
+
+  describe("Test Group 6: Email Failure & Resilience", () => {
+    it("6.1 should roll back OTP state and return 502 when email transport throws", async () => {
+      await request("/api/auth/register", {
+        method: "POST",
+        body: {
+          name: "Email Failure User",
+          email: "emailfail@example.com",
+          password: "Password123!"
+        }
+      });
+
+      const origSendMail = emailService.sendMail;
+      emailService.sendMail = async () => {
+        const err = new Error("Unable to deliver email. Please try again later.");
+        err.statusCode = 502;
+        throw err;
+      };
+
+      try {
+        const res = await request("/api/auth/forgot-password", {
+          method: "POST",
+          body: { email: "emailfail@example.com" }
+        });
+
+        assert.strictEqual(res.status, 502);
+        assert.strictEqual(res.data.success, false);
+        assert.ok(res.data.error.includes("Unable to deliver email"));
+
+        const user = await User.findOne({ email: "emailfail@example.com" });
+        assert.strictEqual(user.passwordResetOTPHash, null);
+      } finally {
+        emailService.sendMail = origSendMail;
+      }
+    });
+  });
 });

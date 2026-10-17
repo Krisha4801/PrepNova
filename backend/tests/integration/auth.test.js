@@ -531,4 +531,123 @@ describe("Auth & Protected Routes Integration Tests", () => {
       assert.strictEqual(legitRes.status, 200);
     });
   });
+
+  // ==========================================
+  // CHANGE PASSWORD TESTS
+  // ==========================================
+  describe("Change Password API - POST /api/auth/change-password", () => {
+    let authToken;
+
+    before(async () => {
+      const loginRes = await request("/api/auth/login", {
+        method: "POST",
+        body: {
+          email: "jaimin@example.com",
+          password: "StrongPassword123!"
+        }
+      });
+      authToken = loginRes.data.token;
+    });
+
+    it("1. should reject unauthenticated change-password request with 401", async () => {
+      const res = await request("/api/auth/change-password", {
+        method: "POST",
+        body: {
+          currentPassword: "StrongPassword123!",
+          newPassword: "NewStrongPassword456!",
+          confirmPassword: "NewStrongPassword456!"
+        }
+      });
+      assert.strictEqual(res.status, 401);
+    });
+
+    it("2. should reject weak new password with 400 Bad Request and validation errors", async () => {
+      const res = await request("/api/auth/change-password", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${authToken}`
+        },
+        body: {
+          currentPassword: "StrongPassword123!",
+          newPassword: "weakpassword",
+          confirmPassword: "weakpassword"
+        }
+      });
+      assert.strictEqual(res.status, 400);
+      assert.strictEqual(res.data.success, false);
+      assert.ok(res.data.errors.length > 0);
+    });
+
+    it("3. should reject reusing current password with 400 Bad Request", async () => {
+      const res = await request("/api/auth/change-password", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${authToken}`
+        },
+        body: {
+          currentPassword: "StrongPassword123!",
+          newPassword: "StrongPassword123!",
+          confirmPassword: "StrongPassword123!"
+        }
+      });
+      assert.strictEqual(res.status, 400);
+      assert.strictEqual(res.data.success, false);
+      assert.ok(res.data.error.includes("same as your current password"));
+    });
+
+    it("4. should reject incorrect current password with 400 Bad Request", async () => {
+      const res = await request("/api/auth/change-password", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${authToken}`
+        },
+        body: {
+          currentPassword: "WrongCurrentPassword123!",
+          newPassword: "BrandNewStrongPassword789!",
+          confirmPassword: "BrandNewStrongPassword789!"
+        }
+      });
+      assert.strictEqual(res.status, 400);
+      assert.strictEqual(res.data.success, false);
+      assert.ok(res.data.error.includes("Current password is incorrect"));
+    });
+
+    it("5. should successfully change password with valid current and strong new password", async () => {
+      const res = await request("/api/auth/change-password", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${authToken}`
+        },
+        body: {
+          currentPassword: "StrongPassword123!",
+          newPassword: "BrandNewStrongPassword789!",
+          confirmPassword: "BrandNewStrongPassword789!"
+        }
+      });
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.data.success, true);
+      assert.ok(res.data.message.includes("successfully updated"));
+
+      // Verify that old password fails login
+      const oldLoginRes = await request("/api/auth/login", {
+        method: "POST",
+        body: {
+          email: "jaimin@example.com",
+          password: "StrongPassword123!"
+        }
+      });
+      assert.strictEqual(oldLoginRes.status, 401);
+
+      // Verify that new password succeeds login
+      const newLoginRes = await request("/api/auth/login", {
+        method: "POST",
+        body: {
+          email: "jaimin@example.com",
+          password: "BrandNewStrongPassword789!"
+        }
+      });
+      assert.strictEqual(newLoginRes.status, 200);
+      assert.strictEqual(newLoginRes.data.success, true);
+    });
+  });
 });

@@ -6,7 +6,8 @@ const {
   logoutUser,
   forgotPassword,
   verifyResetOTP,
-  resetPassword
+  resetPassword,
+  changePassword
 } = require("../controllers/auth.controller");
 const {
   getProviders,
@@ -39,6 +40,7 @@ router.get("/oauth/:provider/callback", handleCallback);
 // Protected routes
 router.get("/me", authenticateToken, getMe);
 router.post("/logout", logoutUser);
+router.post("/change-password", authenticateToken, authRateLimiter, changePassword);
 
 module.exports = router;
 

@@ -135,9 +135,39 @@ class EmailService {
   }
 
   /**
+   * Validates SMTP configuration presence.
+   * If credentials are missing, returns an object detailing missing keys without exposing values.
+   */
+  validateConfig() {
+    const user = process.env.SMTP_USER || process.env.EMAIL_USER;
+    const rawPass = process.env.SMTP_PASSWORD || process.env.EMAIL_PASS || process.env.EMAIL_PASSWORD;
+    const missingKeys = [];
+    if (!user) missingKeys.push("SMTP_USER (or EMAIL_USER)");
+    if (!rawPass) missingKeys.push("SMTP_PASSWORD (or EMAIL_PASS)");
+    return {
+      isValid: missingKeys.length === 0,
+      missingKeys
+    };
+  }
+
+  /**
    * Core mail dispatcher.
    */
   async sendMail({ to, subject, html, text }) {
+    const isTest = process.env.NODE_ENV === "test" && process.env.TEST_LIVE_EMAIL !== "true";
+
+    if (!isTest) {
+      const configCheck = this.validateConfig();
+      if (!configCheck.isValid) {
+        const configErr = new Error(
+          `SMTP email service is misconfigured: missing required environment variable(s): ${configCheck.missingKeys.join(", ")}.`
+        );
+        configErr.statusCode = 503;
+        configErr.missingKeys = configCheck.missingKeys;
+        throw configErr;
+      }
+    }
+
     const transporter = this.getTransporter();
     const from = this.getFromAddress();
     const replyTo = process.env.EMAIL_REPLY_TO || "support@prepnova.com";
@@ -158,8 +188,19 @@ class EmailService {
       };
     } catch (err) {
       console.error(`[EmailService] Failed to send email to ${to}: ${err.message}`);
-      const deliveryError = new Error("Unable to deliver email. Please try again later.");
-      deliveryError.statusCode = 502;
+      let userFriendlyMessage = "Unable to deliver email. Please try again later.";
+      let statusCode = 502;
+
+      if (err.code === "EAUTH" || err.responseCode === 535) {
+        userFriendlyMessage = "Email delivery failed: invalid SMTP credentials (SMTP_USER / SMTP_PASSWORD). Please check your email configuration.";
+        statusCode = 502;
+      } else if (err.code === "ESOCKET" || err.code === "ETIMEDOUT" || err.code === "ECONNREFUSED") {
+        userFriendlyMessage = "Email delivery failed: unable to connect to the SMTP server. Please verify SMTP_HOST and SMTP_PORT.";
+        statusCode = 502;
+      }
+
+      const deliveryError = new Error(userFriendlyMessage);
+      deliveryError.statusCode = statusCode;
       deliveryError.originalError = err.message;
       throw deliveryError;
     }

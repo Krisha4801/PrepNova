@@ -65,4 +65,38 @@ describe("Email Service & Template Rendering Unit Tests", () => {
     assert.ok(sent.html.includes("Continue with Google"));
     assert.ok(sent.text.includes("Continue with Google"));
   });
+
+  it("should accurately validate SMTP configuration and report missing keys", () => {
+    const origUser = process.env.SMTP_USER;
+    const origPass = process.env.SMTP_PASSWORD;
+    const origEmailUser = process.env.EMAIL_USER;
+    const origEmailPass = process.env.EMAIL_PASS;
+
+    try {
+      delete process.env.SMTP_USER;
+      delete process.env.EMAIL_USER;
+      delete process.env.SMTP_PASSWORD;
+      delete process.env.EMAIL_PASS;
+
+      const check1 = emailService.validateConfig();
+      assert.strictEqual(check1.isValid, false);
+      assert.ok(check1.missingKeys.some((k) => k.includes("SMTP_USER")));
+      assert.ok(check1.missingKeys.some((k) => k.includes("SMTP_PASSWORD")));
+
+      process.env.SMTP_USER = "user@example.com";
+      const check2 = emailService.validateConfig();
+      assert.strictEqual(check2.isValid, false);
+      assert.ok(check2.missingKeys.some((k) => k.includes("SMTP_PASSWORD")));
+
+      process.env.SMTP_PASSWORD = "secretpassword";
+      const check3 = emailService.validateConfig();
+      assert.strictEqual(check3.isValid, true);
+      assert.strictEqual(check3.missingKeys.length, 0);
+    } finally {
+      if (origUser !== undefined) process.env.SMTP_USER = origUser;
+      if (origPass !== undefined) process.env.SMTP_PASSWORD = origPass;
+      if (origEmailUser !== undefined) process.env.EMAIL_USER = origEmailUser;
+      if (origEmailPass !== undefined) process.env.EMAIL_PASS = origEmailPass;
+    }
+  });
 });
