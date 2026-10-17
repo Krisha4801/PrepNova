@@ -19,6 +19,7 @@ import {
   resetPasswordApi,
   resendResetOtpApi
 } from '../lib/api';
+import { PASSWORD_REQUIREMENTS, validatePasswordStrength } from '../lib/passwordValidator';
 
 export default function ForgotPasswordPage() {
   const navigate = useNavigate();
@@ -177,23 +178,30 @@ export default function ForgotPasswordPage() {
   // STEP 3: Reset Password
   const handleResetPassword = async (e) => {
     e.preventDefault();
-    if (newPassword.length < 6) {
-      setError('Password must be at least 6 characters long.');
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      setError('Password confirmation does not match.');
+    setError('');
+
+    const pwdValidation = validatePasswordStrength(newPassword, 'New password');
+    if (!pwdValidation.isValid) {
+      setError(pwdValidation.errors);
       return;
     }
 
-    setError('');
+    if (newPassword !== confirmPassword) {
+      setError('Password confirmation does not match the new password.');
+      return;
+    }
+
     setLoading(true);
 
     try {
       await resetPasswordApi(resetToken, newPassword, confirmPassword);
       setStep('success');
     } catch (err) {
-      setError(err.message || 'Failed to reset password. Please start a new request.');
+      if (err.data?.errors && Array.isArray(err.data.errors) && err.data.errors.length > 0) {
+        setError(err.data.errors);
+      } else {
+        setError(err.message || 'Failed to reset password. Please start a new request.');
+      }
     } finally {
       setLoading(false);
     }
@@ -270,7 +278,13 @@ export default function ForgotPasswordPage() {
             {error && (
               <div className="mb-6 p-3.5 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-300 rounded-xl text-xs font-medium leading-relaxed flex items-start gap-2.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0 mt-1.5" />
-                <span>{error}</span>
+                <div className="space-y-1">
+                  {Array.isArray(error) ? (
+                    error.map((err, idx) => <p key={idx}>{err}</p>)
+                  ) : (
+                    <p>{error}</p>
+                  )}
+                </div>
               </div>
             )}
 
@@ -491,22 +505,45 @@ export default function ForgotPasswordPage() {
                   </div>
 
                   {/* Password requirement indicator */}
-                  <div className="py-1">
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-                      <span className={`w-1.5 h-1.5 rounded-full ${newPassword.length >= 6 ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'}`} />
-                      <span>Must be at least 6 characters</span>
+                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-[#070C1B] border border-slate-200/80 dark:border-slate-800 space-y-1.5 my-1">
+                    <p className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">
+                      Requirements:
                     </p>
-                    {confirmPassword && (
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1.5 mt-1">
-                        <span className={`w-1.5 h-1.5 rounded-full ${newPassword === confirmPassword ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-                        <span>{newPassword === confirmPassword ? 'Passwords match' : 'Passwords do not match'}</span>
-                      </p>
-                    )}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+                      {PASSWORD_REQUIREMENTS.map((req) => {
+                        const isMet = req.test(newPassword);
+                        return (
+                          <span
+                            key={req.id}
+                            className={`inline-flex items-center gap-1.5 transition-colors ${
+                              isMet
+                                ? 'text-emerald-600 dark:text-emerald-400 font-medium'
+                                : 'text-slate-400 dark:text-slate-500'
+                            }`}
+                          >
+                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isMet ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'}`} />
+                            <span>{req.label}</span>
+                          </span>
+                        );
+                      })}
+                      {confirmPassword && (
+                        <span
+                          className={`inline-flex items-center gap-1.5 transition-colors sm:col-span-2 ${
+                            newPassword === confirmPassword
+                              ? 'text-emerald-600 dark:text-emerald-400 font-medium'
+                              : 'text-rose-500'
+                          }`}
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${newPassword === confirmPassword ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                          <span>{newPassword === confirmPassword ? 'Passwords match' : 'Passwords do not match'}</span>
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   <button
                     type="submit"
-                    disabled={loading || newPassword.length < 6 || newPassword !== confirmPassword}
+                    disabled={loading || !newPassword || !confirmPassword}
                     className="w-full btn-primary h-11 mt-2"
                   >
                     {loading ? (
