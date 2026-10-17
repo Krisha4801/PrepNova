@@ -13,6 +13,7 @@ import {
   Target, 
   Award 
 } from 'lucide-react';
+import { PASSWORD_REQUIREMENTS, validatePasswordStrength } from '../lib/passwordValidator';
 
 export default function SignupPage() {
   const [formData, setFormData] = useState({
@@ -61,13 +62,14 @@ export default function SignupPage() {
     e.preventDefault();
     setError('');
 
-    if (formData.password !== formData.confirmPassword) {
-      setError('Passwords do not match.');
+    const pwdValidation = validatePasswordStrength(formData.password);
+    if (!pwdValidation.isValid) {
+      setError(pwdValidation.errors);
       return;
     }
 
-    if (formData.password.length < 6) {
-      setError('Password must be at least 6 characters long.');
+    if (formData.password !== formData.confirmPassword) {
+      setError('Passwords do not match.');
       return;
     }
 
@@ -83,7 +85,11 @@ export default function SignupPage() {
       });
       navigate('/dashboard');
     } catch (err) {
-      setError(err.message || 'Registration failed. Please check your details.');
+      if (err.data?.errors && Array.isArray(err.data.errors) && err.data.errors.length > 0) {
+        setError(err.data.errors);
+      } else {
+        setError(err.message || 'Registration failed. Please check your details.');
+      }
       setLoading(false);
     }
   };
@@ -171,7 +177,13 @@ export default function SignupPage() {
             {error && (
               <div className="mb-5 p-3.5 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-300 rounded-xl text-xs font-medium leading-relaxed flex items-start gap-2.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0 mt-1.5" />
-                <span>{error}</span>
+                <div className="space-y-1">
+                  {Array.isArray(error) ? (
+                    error.map((err, idx) => <p key={idx}>{err}</p>)
+                  ) : (
+                    <p>{error}</p>
+                  )}
+                </div>
               </div>
             )}
 
@@ -307,6 +319,33 @@ export default function SignupPage() {
                   />
                 </div>
               </div>
+
+              {/* Password Requirements Live Checklist */}
+              {formData.password && (
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-[#070C1B] border border-slate-200/80 dark:border-slate-800 space-y-1.5">
+                  <p className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">
+                    Password requirements:
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+                    {PASSWORD_REQUIREMENTS.map((req) => {
+                      const isMet = req.test(formData.password);
+                      return (
+                        <span
+                          key={req.id}
+                          className={`inline-flex items-center gap-1.5 transition-colors ${
+                            isMet
+                              ? 'text-emerald-600 dark:text-emerald-400 font-medium'
+                              : 'text-slate-400 dark:text-slate-500'
+                          }`}
+                        >
+                          <CheckCircle2 className={`w-3.5 h-3.5 shrink-0 ${isMet ? 'text-emerald-500' : 'opacity-40'}`} />
+                          <span>{req.label}</span>
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               <button
                 type="submit"

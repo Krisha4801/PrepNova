@@ -19,6 +19,8 @@ import { useNavigate } from 'react-router-dom';
 import WorkspaceLayout from '../components/layout/WorkspaceLayout';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
+import { changePasswordApi } from '../lib/api';
+import { PASSWORD_REQUIREMENTS, validatePasswordStrength } from '../lib/passwordValidator';
 
 export default function SettingsPage() {
   const navigate = useNavigate();
@@ -55,18 +57,17 @@ export default function SettingsPage() {
 
   const validatePassword = () => {
     const errors = {};
-    if (!passwordForm.currentPassword.trim()) {
+    if (!passwordForm.currentPassword) {
       errors.currentPassword = 'Enter your current password';
     }
     if (!passwordForm.newPassword) {
-      errors.newPassword = 'Enter a new password';
+      errors.newPassword = ['Enter a new password'];
     } else {
-      if (passwordForm.newPassword.length < 8) {
-        errors.newPassword = 'Must be at least 8 characters';
-      } else if (!/[A-Z]/.test(passwordForm.newPassword)) {
-        errors.newPassword = 'Must contain at least one uppercase letter';
-      } else if (!/[0-9]/.test(passwordForm.newPassword)) {
-        errors.newPassword = 'Must contain at least one number';
+      const pwdValidation = validatePasswordStrength(passwordForm.newPassword, 'New password');
+      if (!pwdValidation.isValid) {
+        errors.newPassword = pwdValidation.errors;
+      } else if (passwordForm.currentPassword && passwordForm.currentPassword === passwordForm.newPassword) {
+        errors.newPassword = ['New password cannot be the same as your current password.'];
       }
     }
     if (!passwordForm.confirmPassword) {
@@ -77,15 +78,23 @@ export default function SettingsPage() {
     return errors;
   };
 
-  const handleUpdatePassword = (e) => {
+  const handleUpdatePassword = async (e) => {
     e.preventDefault();
     const errors = validatePassword();
     if (Object.keys(errors).length > 0) {
       setPasswordErrors(errors);
       return;
     }
+
     setIsUpdatingPassword(true);
-    setTimeout(() => {
+    setPasswordErrors({});
+
+    try {
+      await changePasswordApi(
+        passwordForm.currentPassword,
+        passwordForm.newPassword,
+        passwordForm.confirmPassword
+      );
       setIsUpdatingPassword(false);
       setShowPasswordModal(false);
       setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
@@ -93,7 +102,16 @@ export default function SettingsPage() {
       setToastMessage('Password updated successfully');
       setShowToast(true);
       setTimeout(() => setShowToast(false), 3000);
-    }, 700);
+    } catch (err) {
+      setIsUpdatingPassword(false);
+      if (err.data?.errors && Array.isArray(err.data.errors) && err.data.errors.length > 0) {
+        setPasswordErrors({ form: err.data.errors });
+      } else {
+        setPasswordErrors({
+          form: err.message || 'Failed to update password. Please check your inputs.'
+        });
+      }
+    }
   };
 
   const handleDownloadData = () => {
@@ -558,6 +576,19 @@ export default function SettingsPage() {
             </div>
 
             <form onSubmit={handleUpdatePassword} className="space-y-3.5">
+              {passwordErrors.form && (
+                <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-300 rounded-xl text-xs font-medium leading-relaxed flex items-start gap-2.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0 mt-1.5" />
+                  <div className="space-y-0.5">
+                    {Array.isArray(passwordErrors.form) ? (
+                      passwordErrors.form.map((err, idx) => <p key={idx}>{err}</p>)
+                    ) : (
+                      <p>{passwordErrors.form}</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Current Password */}
               <div>
                 <label className="block text-[12px] font-medium text-[#0F172A] dark:text-[#F8FAFC] mb-1 leading-[1.4]">
@@ -618,29 +649,53 @@ export default function SettingsPage() {
                   </button>
                 </div>
                 {passwordErrors.newPassword && (
-                  <p className="text-[12px] text-rose-500 mt-0.5 font-normal">{passwordErrors.newPassword}</p>
+                  <div className="mt-1 space-y-0.5">
+                    {Array.isArray(passwordErrors.newPassword) ? (
+                      passwordErrors.newPassword.map((err, idx) => (
+                        <p key={idx} className="text-[12px] text-rose-500 font-normal">{err}</p>
+                      ))
+                    ) : (
+                      <p className="text-[12px] text-rose-500 font-normal">{passwordErrors.newPassword}</p>
+                    )}
+                  </div>
                 )}
 
                 {/* Validation checklist */}
-                <div className="mt-2 p-2 rounded-lg bg-slate-50 dark:bg-[#0F2347] border border-slate-100 dark:border-white/5 space-y-0.5">
+                <div className="mt-2 p-2.5 rounded-lg bg-slate-50 dark:bg-[#0F2347] border border-slate-100 dark:border-white/5 space-y-1">
                   <p className="text-[11px] font-medium text-[#64748B] dark:text-[#94A3B8]">
                     Requirements:
                   </p>
-                  <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[11px]">
-                    <span className={`inline-flex items-center gap-1 ${passwordForm.newPassword.length >= 8 ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-[#64748B] dark:text-[#94A3B8]'}`}>
-                      <Check className={`w-3 h-3 ${passwordForm.newPassword.length >= 8 ? 'stroke-[2.5]' : 'opacity-40'}`} />
-                      8+ characters
-                    </span>
-                    <span className={`inline-flex items-center gap-1 ${/[A-Z]/.test(passwordForm.newPassword) ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-[#64748B] dark:text-[#94A3B8]'}`}>
-                      <Check className={`w-3 h-3 ${/[A-Z]/.test(passwordForm.newPassword) ? 'stroke-[2.5]' : 'opacity-40'}`} />
-                      One uppercase
-                    </span>
-                    <span className={`inline-flex items-center gap-1 ${/[0-9]/.test(passwordForm.newPassword) ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-[#64748B] dark:text-[#94A3B8]'}`}>
-                      <Check className={`w-3 h-3 ${/[0-9]/.test(passwordForm.newPassword) ? 'stroke-[2.5]' : 'opacity-40'}`} />
-                      One number
-                    </span>
-                    <span className={`inline-flex items-center gap-1 ${Boolean(passwordForm.confirmPassword) && passwordForm.newPassword === passwordForm.confirmPassword ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-[#64748B] dark:text-[#94A3B8]'}`}>
-                      <Check className={`w-3 h-3 ${Boolean(passwordForm.confirmPassword) && passwordForm.newPassword === passwordForm.confirmPassword ? 'stroke-[2.5]' : 'opacity-40'}`} />
+                  <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[11px]">
+                    {PASSWORD_REQUIREMENTS.map((req) => {
+                      const isMet = req.test(passwordForm.newPassword);
+                      return (
+                        <span
+                          key={req.id}
+                          className={`inline-flex items-center gap-1 ${
+                            isMet
+                              ? 'text-emerald-600 dark:text-emerald-400 font-medium'
+                              : 'text-[#64748B] dark:text-[#94A3B8]'
+                          }`}
+                        >
+                          <Check className={`w-3 h-3 ${isMet ? 'stroke-[2.5]' : 'opacity-40'}`} />
+                          {req.label}
+                        </span>
+                      );
+                    })}
+                    <span
+                      className={`inline-flex items-center gap-1 ${
+                        Boolean(passwordForm.confirmPassword) && passwordForm.newPassword === passwordForm.confirmPassword
+                          ? 'text-emerald-600 dark:text-emerald-400 font-medium'
+                          : 'text-[#64748B] dark:text-[#94A3B8]'
+                      }`}
+                    >
+                      <Check
+                        className={`w-3 h-3 ${
+                          Boolean(passwordForm.confirmPassword) && passwordForm.newPassword === passwordForm.confirmPassword
+                            ? 'stroke-[2.5]'
+                            : 'opacity-40'
+                        }`}
+                      />
                       Passwords match
                     </span>
                   </div>
