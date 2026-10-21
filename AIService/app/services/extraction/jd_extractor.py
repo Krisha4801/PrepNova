@@ -1,8 +1,9 @@
+import json
+import re
+
 from app.schemas.jd import JobDescription
 from app.services.llm.client import LLMClient
 from langchain_core.output_parsers import PydanticOutputParser
-from app.schemas.jd import JobDescription
-from app.services.llm.client import LLMClient
 
 
 class JDExtractor:
@@ -11,13 +12,7 @@ class JDExtractor:
         self.llm = LLMClient().get_llm()
         self.parser = PydanticOutputParser(pydantic_object=JobDescription)
 
-
     def extract(self, text: str) -> JobDescription:
-
-        structured_llm = self.llm.with_structured_output(
-            JobDescription
-        )
-
         prompt = f"""
 You are an expert job description information extraction system.
 Extract information from the job description and format it strictly as a single JSON object matching the schema below.
@@ -37,6 +32,25 @@ Job Description:
 {text}
 --- JD END ---
 """
+        # 1. Primary: native structured output
+        try:
+            structured_llm = self.llm.with_structured_output(JobDescription)
+            result = structured_llm.invoke(prompt)
+            if isinstance(result, JobDescription):
+                return result
+            if isinstance(result, dict):
+                return JobDescription.model_validate(result)
+        except Exception:
+            pass
+
+        # 2. Resilient fallback: standard invoke with markdown fence removal
         response = self.llm.invoke(prompt)
-        result = self.parser.parse(response.content)
-        return result
+        raw_content = response.content if hasattr(response, "content") else str(response)
+        cleaned = re.sub(r"^```(?:json)?\s*", "", raw_content.strip(), flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s*```$", "", cleaned.strip())
+
+        try:
+            return self.parser.parse(cleaned)
+        except Exception:
+            parsed_dict = json.loads(cleaned)
+            return JobDescription.model_validate(parsed_dict)

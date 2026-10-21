@@ -1,5 +1,5 @@
-from langchain_core import prompt_values
 import json
+import re
 
 from app.schemas.resume import Resume
 from app.services.llm.client import LLMClient
@@ -10,15 +10,9 @@ class ResumeExtractor:
 
     def __init__(self):
         self.llm = LLMClient().get_llm()
-        self.parser = PydanticOutputParser(pydantic_object=Resume) 
+        self.parser = PydanticOutputParser(pydantic_object=Resume)
 
     def extract(self, text: str) -> Resume:
-
-        structured_llm = self.llm.with_structured_output(
-            Resume,
-            method="json_mode"
-        )
-
         prompt = f"""
 You are an expert resume information extraction system.
 Extract the resume content and format it strictly as a single JSON object matching the schema below.
@@ -34,6 +28,25 @@ Resume:
 --- RESUME END ---
 """
 
+        # 1. Primary: native structured output
+        try:
+            structured_llm = self.llm.with_structured_output(Resume)
+            result = structured_llm.invoke(prompt)
+            if isinstance(result, Resume):
+                return result
+            if isinstance(result, dict):
+                return Resume.model_validate(result)
+        except Exception:
+            pass
+
+        # 2. Resilient fallback: standard invoke with markdown fence removal
         response = self.llm.invoke(prompt)
-        result = self.parser.parse(response.content)
-        return result
+        raw_content = response.content if hasattr(response, "content") else str(response)
+        cleaned = re.sub(r"^```(?:json)?\s*", "", raw_content.strip(), flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s*```$", "", cleaned.strip())
+
+        try:
+            return self.parser.parse(cleaned)
+        except Exception:
+            parsed_dict = json.loads(cleaned)
+            return Resume.model_validate(parsed_dict)

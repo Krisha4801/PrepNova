@@ -1,4 +1,3 @@
-from math import remainder
 from typing import List
 from app.schemas.document import InterviewDocument
 from app.schemas.resume import Resume
@@ -14,34 +13,6 @@ def resume_to_documents(
 
     documents: List[InterviewDocument] = []
 
-    # Candidate Information
-    candidate = getattr(resume, "candidate", None) or getattr(resume, "candidate_info", None)
-    if candidate:
-        content_parts = []
-        name = getattr(candidate, "name", None)
-        email = getattr(candidate, "email", None)
-        phone = getattr(candidate, "phone", None)
-        location = getattr(candidate, "location", None)
-
-        if name:
-            content_parts.append(f"Name: {name}")
-        if email:
-            content_parts.append(f"Email: {email}")
-        if phone:
-            content_parts.append(f"Phone: {phone}")
-        if location:
-            content_parts.append(f"Location: {location}")
-
-        if content_parts:
-            documents.append(
-                InterviewDocument(
-                    content=normalize_text("\n".join(content_parts)),
-                    source="resume",
-                    document_type="resume",
-                    section="candidate_info",
-                )
-            )
-
     # Summary
     summary = getattr(resume, "summary", None)
     if summary and str(summary).strip():
@@ -54,9 +25,10 @@ def resume_to_documents(
             )
         )
     
-    # Education
-    for index, education in enumerate(resume.education or []):
-        content_parts = []
+    # Education - Consolidated into a single cohesive document to prevent noise in vector search
+    edu_entries = []
+    for education in (resume.education or []):
+        entry_parts = []
         degree = getattr(education, "degree", None)
         inst = getattr(education, "institution", None)
         field = getattr(education, "field", None) or getattr(education, "field_of_study", None)
@@ -64,24 +36,26 @@ def resume_to_documents(
         end = getattr(education, "end_year", None) or getattr(education, "end_date", None)
 
         if degree:
-            content_parts.append(f"Degree: {degree}")
+            entry_parts.append(f"Degree: {degree}")
         if inst:
-            content_parts.append(f"Institution: {inst}")
+            entry_parts.append(f"Institution: {inst}")
         if field:
-            content_parts.append(f"Field: {field}")
+            entry_parts.append(f"Field: {field}")
         if start or end:
-            content_parts.append(f"Period: {start or ''} - {end or 'Present'}")
+            entry_parts.append(f"Period: {start or ''} - {end or 'Present'}")
 
-        if content_parts:
-            documents.append(
-                InterviewDocument(
-                    content=normalize_text("\n".join(content_parts)),
-                    source="resume",
-                    document_type="resume",
-                    section="education",
-                    metadata={"education_index": index},
-                )
+        if entry_parts:
+            edu_entries.append(" | ".join(entry_parts))
+
+    if edu_entries:
+        documents.append(
+            InterviewDocument(
+                content=normalize_text("Education Background:\n" + "\n".join(f"- {e}" for e in edu_entries)),
+                source="resume",
+                document_type="resume",
+                section="education",
             )
+        )
  
     # Experience
     for index, experience in enumerate(resume.experience or []):

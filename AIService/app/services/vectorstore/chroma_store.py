@@ -280,35 +280,69 @@ class ChromaStore:
             metadatas=metadatas,
         )
 
-    def search_role(
-    self,
-    query: str,
-    role: str,
-    top_k: int = 5,
-):
-        """
-        Search only the global knowledge
-        belonging to the requested role.
-        """
+    @staticmethod
+    def normalize_role(role: str) -> str:
+        r = (role or "").strip().lower().replace("_", " ").replace("-", " ")
+        if any(k in r for k in ["front", "ui", "react", "web dev"]):
+            return "Frontend Engineer"
+        if any(k in r for k in ["back", "api", "node dev", "server"]):
+            return "Backend Engineer"
+        if any(k in r for k in ["full", "mern", "mean"]):
+            return "Fullstack Engineer"
+        if any(k in r for k in ["ai", "ml", "machine learning", "artificial intelligence", "aiml"]):
+            return "AI Engineer"
+        if any(k in r for k in ["devops", "sre", "platform engineer"]):
+            return "DevOps Engineer"
+        if any(k in r for k in ["data sci", "data anal", "data eng", "data"]):
+            return "Data Scientist"
+        if any(k in r for k in ["cloud", "aws", "azure", "gcp"]):
+            return "Cloud Engineer"
+        if any(k in r for k in ["qa", "test", "quality", "sdet"]):
+            return "QA Engineer"
+        return role.strip()
 
+    def search_role(
+        self,
+        query: str,
+        role: str,
+        top_k: int = 5,
+    ):
+        """
+        Search only the global knowledge belonging to the requested role,
+        with automatic normalization and fallback.
+        """
         query_embedding = (
             self.embedding_service.embed_query(query)
         )
 
+        target_roles = [role]
+        norm = self.normalize_role(role)
+        if norm and norm not in target_roles:
+            target_roles.append(norm)
+
+        for candidate_role in target_roles:
+            results = self.collection.query(
+                query_embeddings=[query_embedding],
+                n_results=top_k,
+                where={
+                    "$and": [
+                        {"scope": "global"},
+                        {"document_type": "role"},
+                        {"role": candidate_role},
+                    ]
+                },
+            )
+            if results and results.get("documents") and results["documents"][0]:
+                return results
+
+        # Broad fallback if no specific role documents matched: search any global role documents
         return self.collection.query(
             query_embeddings=[query_embedding],
             n_results=top_k,
             where={
                 "$and": [
-                    {
-                        "scope": "global"
-                    },
-                    {
-                        "document_type": "role"
-                    },
-                    {
-                        "role": role
-                    },
+                    {"scope": "global"},
+                    {"document_type": "role"},
                 ]
             },
         )

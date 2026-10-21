@@ -24,6 +24,9 @@ class PreviousQA(BaseModel):
     answer: str
     score: Optional[float] = None
     level: Optional[str] = None
+    is_skipped: Optional[bool] = False
+    category: Optional[str] = None
+    intent: Optional[str] = None
 
 
 class GenerateQuestionRequest(BaseModel):
@@ -48,6 +51,9 @@ class GeneratedQuestion(BaseModel):
     grounding_context: Optional[str] = None
     source: str = "rag_llm"
     role: str = "General"
+    focus_topic: Optional[str] = None
+    intent: Optional[str] = None
+    grounding_source: Optional[str] = None
 
 
 class EvaluateAnswerRequest(BaseModel):

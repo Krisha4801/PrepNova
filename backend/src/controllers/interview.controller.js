@@ -201,6 +201,14 @@ exports.startInterview = async (req, res, next) => {
       }
     }
 
+    // Deterministic source isolation: zero out unpermitted sources for the active mode
+    const resumePermittedModes = ["resume", "resume_jd", "resume_role", "resume_jd_role"];
+    const jdPermittedModes = ["jd", "resume_jd", "role_jd", "resume_jd_role"];
+    if (!resumePermittedModes.includes(mode)) {
+      effectiveResumeId = null;
+    }
+    const effectiveJdId = jdPermittedModes.includes(mode) ? (jdId || null) : null;
+
     // 3. For non-role modes (resume, jd, resume_jd), role is NOT required or forced
     const nonRoleModes = ["resume", "jd", "resume_jd"];
     if (nonRoleModes.includes(mode)) {
@@ -225,7 +233,7 @@ exports.startInterview = async (req, res, next) => {
         difficulty: selectedLevel,
         mode,
         resumeId: effectiveResumeId,
-        jdId,
+        jdId: effectiveJdId,
         focusAreas: Array.isArray(focusAreas) ? focusAreas : []
       });
     } catch (aiErr) {
@@ -581,14 +589,52 @@ exports.skipQuestion = async (req, res, next) => {
     const nextLevel = nextDifficulty(currentQuestion.difficulty || session.difficulty, 0);
     session.difficulty = nextLevel;
 
-    const fallback = await fallbackGenerateQuestion(session.role, nextLevel);
+    // Generate next grounded question via AI service with session context & history
+    let nextQ;
+    try {
+      const historyItems = session.questions.map((q, idx) => ({
+        question: q.question,
+        answer: session.answers[idx]?.answer || "",
+        score: session.evaluations[idx]?.score || 0,
+        level: q.difficulty,
+        is_skipped: session.answers[idx]?.isSkipped || false
+      }));
+
+      nextQ = await aiServiceClient.generateInterviewQuestion({
+        userId,
+        role: session.role,
+        difficulty: nextLevel,
+        mode: session.mode,
+        resumeId: session.resumeId,
+        jdId: session.jdId,
+        history: historyItems,
+        askedQuestionIds: session.questions.map((q) => q.questionId).filter(Boolean)
+      });
+    } catch (skipErr) {
+      const fallback = await fallbackGenerateQuestion(session.role, nextLevel, {
+        excludeIds: session.questions.map((q) => q.questionId).filter(Boolean)
+      });
+      nextQ = {
+        id: fallback.id || `q_${Date.now()}`,
+        question: fallback.question,
+        category: "Technical Concept",
+        format: "Scenario",
+        difficulty: fallback.level || nextLevel,
+        expected_concepts: [session.role],
+        source: "fallback"
+      };
+    }
+
     const nextQuestionItem = {
-      questionId: fallback.id || `q_${Date.now()}`,
-      question: fallback.question,
-      category: "Technical Concept",
-      format: "Scenario",
-      difficulty: nextLevel,
-      source: fallback.source || "fallback"
+      questionId: nextQ.id || `q_${session.questions.length + 1}_${Date.now()}`,
+      question: nextQ.question,
+      category: nextQ.category || "Technical Concept",
+      format: nextQ.format || "Scenario",
+      difficulty: nextQ.difficulty || nextLevel,
+      groundingContext: nextQ.grounding_context || null,
+      expectedConcepts: nextQ.expected_concepts || [],
+      expectedAnswer: nextQ.expectedAnswer || null,
+      source: nextQ.source || "langgraph_rag"
     };
 
     session.questions.push(nextQuestionItem);

@@ -113,3 +113,37 @@ async def evaluate_interview_session(request: EvaluateSessionRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Session evaluation error: {str(e)}"
         )
+
+
+@router.post("/validate-context")
+async def validate_interview_context(request: dict):
+    """
+    Validates alignment between candidate profile, target role, and job description
+    before initiating an interview session.
+    """
+    try:
+        from app.services.role_validation.validator import RoleValidationService
+        from app.schemas.resume import Resume
+        from app.schemas.jd import JobDescription
+
+        validator = RoleValidationService()
+        mode = request.get("mode", "role")
+        target_role = request.get("target_role")
+        raw_resume = request.get("resume")
+        raw_jd = request.get("jd")
+
+        parsed_resume = Resume.model_validate(raw_resume) if raw_resume else None
+        parsed_jd = JobDescription.model_validate(raw_jd) if raw_jd else None
+
+        result = validator.validate(
+            mode=mode,
+            target_role=target_role,
+            resume=parsed_resume,
+            jd=parsed_jd,
+        )
+        return result.model_dump()
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Role validation error: {str(e)}"
+        )

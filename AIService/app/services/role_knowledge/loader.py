@@ -13,7 +13,13 @@ class RoleKnowledgeLoader:
     """
 
     def __init__(self, root_dir: str = "role_knowledge"):
-        self.root_dir = Path(root_dir)
+        path = Path(root_dir)
+        if not path.is_absolute() and not path.exists():
+            # Check relative to AIService root
+            repo_root = Path(__file__).resolve().parents[3] / root_dir
+            if repo_root.exists():
+                path = repo_root
+        self.root_dir = path
 
     @staticmethod
     def role_name_from_slug(slug: str) -> str:
@@ -24,6 +30,12 @@ class RoleKnowledgeLoader:
         aliases = {
             "ai_engineer": "AI Engineer",
             "backend_engineer": "Backend Engineer",
+            "frontend_engineer": "Frontend Engineer",
+            "fullstack_engineer": "Fullstack Engineer",
+            "devops_engineer": "DevOps Engineer",
+            "data_scientist": "Data Scientist",
+            "cloud_engineer": "Cloud Engineer",
+            "qa_engineer": "QA Engineer",
             "data_engineer": "Data Engineer",
             "ml_engineer": "ML Engineer",
             "software_engineer": "Software Engineer",

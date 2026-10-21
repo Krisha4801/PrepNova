@@ -34,8 +34,15 @@ export default function ReviewInterviewPage() {
   const questionCount = location.state?.questionCount || Number(localStorage.getItem('prepnova_question_count')) || 6;
   const interviewMode = location.state?.interviewMode || localStorage.getItem('prepnova_mode') || 'Text';
   const selectedSkills = location.state?.selectedSkills || JSON.parse(localStorage.getItem('prepnova_skills') || '[]');
-  const resumeId = location.state?.resumeId || localStorage.getItem('prepnova_resume_id') || null;
-  const jdId = location.state?.jdId || localStorage.getItem('prepnova_jd_id') || null;
+
+  const resumePermittedModes = ['resume', 'resume_jd', 'resume_role', 'resume_jd_role'];
+  const jdPermittedModes = ['jd', 'resume_jd', 'role_jd', 'resume_jd_role'];
+  const resumeId = resumePermittedModes.includes(mode)
+    ? (location.state?.resumeId || localStorage.getItem('prepnova_resume_id') || null)
+    : null;
+  const jdId = jdPermittedModes.includes(mode)
+    ? (location.state?.jdId || localStorage.getItem('prepnova_jd_id') || null)
+    : null;
 
   const handleLaunch = async () => {
     setIsStarting(true);

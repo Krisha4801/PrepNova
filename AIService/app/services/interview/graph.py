@@ -1,4 +1,8 @@
 import json
+import logging
+import re
+import math
+import numpy as np
 from typing import Dict, Any, List, Optional
 from pydantic import BaseModel, Field
 
@@ -18,6 +22,23 @@ from app.schemas.interview import (
 )
 from app.services.llm.client import LLMClient
 from app.services.vectorstore.chroma_store import ChromaStore
+from app.services.embeddings.service import EmbeddingService
+from app.services.interview.benchmark import (
+    get_benchmark_slot,
+    get_role_default_topics,
+    get_calibrated_fallback_question,
+    normalize_level_key,
+    DIFFICULTY_BENCHMARKS,
+)
+
+logger = logging.getLogger(__name__)
+_shared_embedding_service = None
+
+def get_shared_embedding_service() -> EmbeddingService:
+    global _shared_embedding_service
+    if _shared_embedding_service is None:
+        _shared_embedding_service = EmbeddingService()
+    return _shared_embedding_service
 
 LEVELS = ["beginner", "intermediate", "advanced"]
 
@@ -46,7 +67,89 @@ def calculate_next_difficulty(current_difficulty: str, score: float) -> str:
 
 
 # =========================================================
-# 1. QUESTION GENERATION LANGGRAPH
+# REPETITION DETECTION HELPERS
+# =========================================================
+
+def normalize_text_tokens(text: str) -> set:
+    """Extract lowercase alpha-numeric tokens excluding common stop words."""
+    words = re.findall(r"\b[a-z0-9]+\b", text.lower())
+    stop_words = {
+        "a", "an", "the", "in", "on", "of", "to", "for", "with", "at", "by",
+        "how", "what", "why", "when", "where", "which", "can", "you", "explain",
+        "describe", "discuss", "would", "could", "should", "tell", "me", "about"
+    }
+    return {w for w in words if w not in stop_words and len(w) > 2}
+
+
+def compute_jaccard_similarity(text1: str, text2: str) -> float:
+    """Token set Jaccard similarity for near-exact match detection."""
+    set1 = normalize_text_tokens(text1)
+    set2 = normalize_text_tokens(text2)
+    if not set1 or not set2:
+        return 0.0
+    intersection = len(set1.intersection(set2))
+    union = len(set1.union(set2))
+    return float(intersection / union) if union > 0 else 0.0
+
+
+def compute_cosine_similarity(vec_a: List[float], vec_b: List[float]) -> float:
+    """Cosine similarity between two normalized embedding vectors."""
+    a = np.array(vec_a, dtype=float)
+    b = np.array(vec_b, dtype=float)
+    norm_a = np.linalg.norm(a)
+    norm_b = np.linalg.norm(b)
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return float(np.dot(a, b) / (norm_a * norm_b))
+
+
+def is_semantic_duplicate(
+    candidate_question: str,
+    previous_questions: List[str],
+    embedding_service: EmbeddingService,
+    similarity_threshold: float = 0.82,
+    jaccard_threshold: float = 0.65
+) -> tuple[bool, float, str]:
+    """
+    Checks candidate question against all previously asked questions in the session.
+    Returns (is_duplicate, max_similarity, duplicate_reason).
+    """
+    if not previous_questions or not candidate_question.strip():
+        return False, 0.0, ""
+
+    candidate_clean = candidate_question.strip()
+
+    # 1. Exact & Jaccard token overlap check
+    for prev in previous_questions:
+        if not prev or not prev.strip():
+            continue
+        prev_clean = prev.strip()
+        if candidate_clean.lower() == prev_clean.lower():
+            return True, 1.0, f"Exact match with previous question: '{prev_clean}'"
+
+        jaccard = compute_jaccard_similarity(candidate_clean, prev_clean)
+        if jaccard >= jaccard_threshold:
+            return True, jaccard, f"High token overlap ({jaccard:.2f}) with: '{prev_clean}'"
+
+    # 2. Embedding cosine similarity using singleton BAAI/bge-small-en-v1.5
+    try:
+        candidate_emb = embedding_service.embed_query(candidate_clean)
+        for prev in previous_questions:
+            if not prev or not prev.strip():
+                continue
+            prev_emb = embedding_service.embed_query(prev.strip())
+            sim = compute_cosine_similarity(candidate_emb, prev_emb)
+            if sim >= similarity_threshold:
+                return True, sim, f"Semantic similarity ({sim:.2f} >= {similarity_threshold}) with: '{prev.strip()}'"
+    except Exception:
+        # Fall back to token check if embedding fails
+        pass
+
+    return False, 0.0, ""
+
+
+# =========================================================
+# 1. QUESTION GENERATION LANGGRAPH PIPELINE
 # =========================================================
 
 class QuestionState(BaseModel):
@@ -59,219 +162,505 @@ class QuestionState(BaseModel):
     history: List[Dict[str, Any]] = Field(default_factory=list)
     asked_question_ids: List[str] = Field(default_factory=list)
     focus_areas: List[str] = Field(default_factory=list)
-    
+
     # Internal workflow state
     validated_mode: str = "role"
+    effective_user_id: Optional[str] = None
+    effective_resume_id: Optional[str] = None
+    effective_jd_id: Optional[str] = None
+    effective_role: str = "Candidate"
+    
+    # Blueprint state
+    turn_index: int = 1
+    slot_objective: str = ""
+    active_focus_topic: str = ""
+    target_search_query: str = ""
+    
+    # Context & generation state
     grounding_context: str = ""
+    insufficient_context: bool = False
+    retry_count: int = 0
+    candidate_question_text: str = ""
     error: Optional[str] = None
     output_question: Optional[GeneratedQuestion] = None
 
 
 def validate_interview_mode_node(state: QuestionState) -> Dict[str, Any]:
-    has_resume = bool(state.resume_id and state.user_id)
-    has_role = bool(state.role and state.role.strip())
-    has_jd = bool(state.jd_id and state.user_id)
+    """
+    Enforces deterministic source policy based on the requested interview mode.
+    Disallows unpermitted sources from influencing retrieval.
+    """
+    requested_mode = (state.mode or "").strip().lower()
+    user_id = state.user_id
+    raw_role = (state.role or "").strip()
+    raw_resume_id = state.resume_id
+    raw_jd_id = state.jd_id
 
-    # All 7 Context Combinations:
-    if has_resume and has_jd and has_role:
-        mode = InterviewMode.RESUME_JD_ROLE.value
-    elif has_resume and has_jd:
-        mode = InterviewMode.RESUME_JD.value
-    elif has_resume and has_role:
-        mode = InterviewMode.RESUME_ROLE.value
-    elif has_resume:
-        mode = InterviewMode.RESUME.value
-    elif has_role and has_jd:
-        mode = InterviewMode.ROLE_JD.value
-    elif has_jd:
-        mode = InterviewMode.JD.value
-    elif has_role:
-        mode = InterviewMode.ROLE.value
+    # Check available inputs
+    has_resume = bool(raw_resume_id and user_id)
+    has_jd = bool(raw_jd_id and user_id)
+    has_role = bool(raw_role and raw_role.lower() not in {"candidate", "general", "resume candidate", "jd candidate"})
+
+    # Determine validated mode strictly honoring user request if valid
+    validated_mode = None
+    effective_resume_id = None
+    effective_jd_id = None
+    effective_role = raw_role or "Candidate"
+
+    if requested_mode:
+        if requested_mode == InterviewMode.RESUME.value:
+            if not has_resume:
+                return {"error": "Resume mode requires a valid resume_id and user_id.", "validated_mode": "invalid"}
+            validated_mode = InterviewMode.RESUME.value
+            effective_resume_id = raw_resume_id
+            effective_role = raw_role if has_role else "Resume Candidate"
+
+        elif requested_mode == InterviewMode.ROLE.value:
+            if not raw_role:
+                return {"error": "Role mode requires a target role specification.", "validated_mode": "invalid"}
+            validated_mode = InterviewMode.ROLE.value
+            effective_role = raw_role
+
+        elif requested_mode == InterviewMode.RESUME_JD.value:
+            if not has_resume or not has_jd:
+                return {"error": "Resume + JD mode requires both resume_id and jd_id.", "validated_mode": "invalid"}
+            validated_mode = InterviewMode.RESUME_JD.value
+            effective_resume_id = raw_resume_id
+            effective_jd_id = raw_jd_id
+            effective_role = raw_role if has_role else "Candidate"
+
+        elif requested_mode == InterviewMode.RESUME_ROLE.value:
+            if not has_resume or not raw_role:
+                return {"error": "Resume + Role mode requires both resume_id and target role.", "validated_mode": "invalid"}
+            validated_mode = InterviewMode.RESUME_ROLE.value
+            effective_resume_id = raw_resume_id
+            effective_role = raw_role
+
+        elif requested_mode == InterviewMode.ROLE_JD.value:
+            if not raw_role or not has_jd:
+                return {"error": "Role + JD mode requires both target role and jd_id.", "validated_mode": "invalid"}
+            validated_mode = InterviewMode.ROLE_JD.value
+            effective_jd_id = raw_jd_id
+            effective_role = raw_role
+
+        elif requested_mode == InterviewMode.RESUME_JD_ROLE.value:
+            if not has_resume or not has_jd or not raw_role:
+                return {"error": "Resume + Role + JD mode requires resume_id, jd_id, and target role.", "validated_mode": "invalid"}
+            validated_mode = InterviewMode.RESUME_JD_ROLE.value
+            effective_resume_id = raw_resume_id
+            effective_jd_id = raw_jd_id
+            effective_role = raw_role
+
+        elif requested_mode == InterviewMode.JD.value:
+            if not has_jd:
+                return {"error": "JD mode requires a valid jd_id and user_id.", "validated_mode": "invalid"}
+            validated_mode = InterviewMode.JD.value
+            effective_jd_id = raw_jd_id
+            effective_role = raw_role if has_role else "JD Candidate"
+
+    # Fallback auto-detection if mode was not explicitly supplied
+    if not validated_mode:
+        if has_resume and has_jd and has_role:
+            validated_mode = InterviewMode.RESUME_JD_ROLE.value
+            effective_resume_id = raw_resume_id
+            effective_jd_id = raw_jd_id
+            effective_role = raw_role
+        elif has_resume and has_jd:
+            validated_mode = InterviewMode.RESUME_JD.value
+            effective_resume_id = raw_resume_id
+            effective_jd_id = raw_jd_id
+            effective_role = raw_role if has_role else "Candidate"
+        elif has_resume and has_role:
+            validated_mode = InterviewMode.RESUME_ROLE.value
+            effective_resume_id = raw_resume_id
+            effective_role = raw_role
+        elif has_resume:
+            validated_mode = InterviewMode.RESUME.value
+            effective_resume_id = raw_resume_id
+            effective_role = raw_role if has_role else "Resume Candidate"
+        elif has_role and has_jd:
+            validated_mode = InterviewMode.ROLE_JD.value
+            effective_jd_id = raw_jd_id
+            effective_role = raw_role
+        elif has_jd:
+            validated_mode = InterviewMode.JD.value
+            effective_jd_id = raw_jd_id
+            effective_role = raw_role if has_role else "JD Candidate"
+        elif has_role:
+            validated_mode = InterviewMode.ROLE.value
+            effective_role = raw_role
+        else:
+            return {
+                "error": "Insufficient context: please provide a resume, job description, or target role to start an interview.",
+                "validated_mode": "invalid"
+            }
+
+    return {
+        "validated_mode": validated_mode,
+        "effective_user_id": user_id,
+        "effective_resume_id": effective_resume_id,
+        "effective_jd_id": effective_jd_id,
+        "effective_role": effective_role,
+        "error": None
+    }
+
+
+def plan_blueprint_node(state: QuestionState) -> Dict[str, Any]:
+    """
+    Benchmark-Guided Blueprint Planning Stage.
+    Determines slot objective, category, and targeted focus topic
+    calibrated strictly to candidate difficulty level.
+    """
+    if state.error:
+        return {}
+
+    turn_idx = len(state.history) + 1
+    difficulty = state.difficulty or "beginner"
+    effective_role = state.effective_role or "Software Engineer"
+
+    # 1. Fetch benchmark slot for current difficulty and turn
+    slot_info = get_benchmark_slot(difficulty, turn_idx)
+    slot_objective = slot_info["slot_objective"]
+
+    # 2. Dynamic Focus Topic Selection
+    active_focus_topic = ""
+    if state.focus_areas and len(state.focus_areas) > 0:
+        active_focus_topic = state.focus_areas[(turn_idx - 1) % len(state.focus_areas)].strip()
     else:
-        return {
-            "error": "Insufficient context: please provide a resume, job description, or target role to start an interview.",
-            "validated_mode": "invalid"
-        }
+        role_topics = get_role_default_topics(effective_role)
+        active_focus_topic = role_topics[(turn_idx - 1) % len(role_topics)].strip()
 
-    return {"validated_mode": mode, "error": None}
+    # Target search query for retrieval
+    target_query = f"{active_focus_topic} {slot_objective}".strip()
+
+    return {
+        "turn_index": turn_idx,
+        "slot_objective": slot_objective,
+        "active_focus_topic": active_focus_topic,
+        "target_search_query": target_query
+    }
 
 
 def retrieve_context_node(state: QuestionState) -> Dict[str, Any]:
+    """
+    Source-restricted context retrieval.
+    Queries only the permitted stores for the validated mode.
+    Tags evidence clearly into Candidate Experience vs Job Requirements.
+    """
     if state.error or state.validated_mode == "invalid":
-        return {"grounding_context": ""}
+        return {"grounding_context": "", "insufficient_context": True}
 
     store = ChromaStore()
     context_chunks = []
     mode = state.validated_mode
+    query = state.target_search_query or f"{state.effective_role} {state.active_focus_topic}"
 
-    # Dynamic search theme by turn to prevent repetitive chunk retrieval
-    turn_index = len(state.history) + 1
-    themes = [
-        "core technical architecture, systems, and primary stack responsibilities",
-        "hands-on implementation, debugging edge cases, and framework trade-offs",
-        "production workflows, testing, continuous integration, and performance optimization",
-        "resilience, scalability, distributed patterns, and complex technical challenges"
-    ]
-    current_theme = themes[(turn_index - 1) % len(themes)]
-
-    query = f"{state.role or ''} {' '.join(state.focus_areas)} {current_theme}".strip()
+    resume_chunks = []
+    jd_chunks = []
+    role_chunks = []
 
     try:
-        # 1. Resume Context (if resume present in mode)
+        # 1. Resume Context (only if permitted by mode)
         if mode in [
             InterviewMode.RESUME_JD_ROLE.value,
             InterviewMode.RESUME_JD.value,
             InterviewMode.RESUME_ROLE.value,
             InterviewMode.RESUME.value
-        ]:
-            if state.user_id and state.resume_id:
-                results = store.search(
-                    query=query,
-                    user_id=state.user_id,
-                    document_id=state.resume_id,
-                    top_k=4
-                )
-                if results and "documents" in results and results["documents"]:
-                    for doc in results["documents"][0]:
-                        context_chunks.append(f"[Resume Context]: {doc}")
+        ] and state.effective_resume_id and state.effective_user_id:
+            res_results = store.search(
+                query=query,
+                user_id=state.effective_user_id,
+                document_id=state.effective_resume_id,
+                top_k=3
+            )
+            if res_results and "documents" in res_results and res_results["documents"]:
+                docs = res_results["documents"][0]
+                metas = res_results.get("metadatas", [[]])[0] if "metadatas" in res_results and res_results["metadatas"] else [{}] * len(docs)
+                for doc, meta in zip(docs, metas):
+                    if doc and doc.strip():
+                        sec = (meta or {}).get("section", "experience")
+                        resume_chunks.append(f"[{sec.upper()}] {doc.strip()}")
 
-        # 2. Job Description Context (if JD present in mode)
+        # 2. Job Description Context (only if permitted by mode)
         if mode in [
             InterviewMode.RESUME_JD_ROLE.value,
             InterviewMode.RESUME_JD.value,
             InterviewMode.ROLE_JD.value,
             InterviewMode.JD.value
-        ]:
-            if state.user_id and state.jd_id:
-                jd_results = store.search(
-                    query=query,
-                    user_id=state.user_id,
-                    document_id=state.jd_id,
-                    top_k=4
-                )
-                if jd_results and "documents" in jd_results and jd_results["documents"]:
-                    for doc in jd_results["documents"][0]:
-                        context_chunks.append(f"[Job Description Context]: {doc}")
+        ] and state.effective_jd_id and state.effective_user_id:
+            jd_results = store.search(
+                query=query,
+                user_id=state.effective_user_id,
+                document_id=state.effective_jd_id,
+                top_k=3
+            )
+            if jd_results and "documents" in jd_results and jd_results["documents"]:
+                docs = jd_results["documents"][0]
+                metas = jd_results.get("metadatas", [[]])[0] if "metadatas" in jd_results and jd_results["metadatas"] else [{}] * len(docs)
+                for doc, meta in zip(docs, metas):
+                    if doc and doc.strip():
+                        sec = (meta or {}).get("section", "requirements")
+                        jd_chunks.append(f"[{sec.upper()}] {doc.strip()}")
 
-        # 3. Role Knowledge Base (only if role is part of the mode and explicitly provided)
+        # 3. Role Knowledge Base (only if permitted by mode)
         role_modes = [
             InterviewMode.RESUME_JD_ROLE.value,
             InterviewMode.RESUME_ROLE.value,
             InterviewMode.ROLE_JD.value,
             InterviewMode.ROLE.value
         ]
-        if mode in role_modes and state.role and state.role.strip():
-            target_role = state.role.strip()
+        if mode in role_modes and state.effective_role and state.effective_role.strip():
+            target_role = state.effective_role.strip()
             role_results = store.search_role(
                 query=query,
                 role=target_role,
                 top_k=3
             )
             if role_results and "documents" in role_results and role_results["documents"]:
-                for doc in role_results["documents"][0]:
-                    context_chunks.append(f"[Role Knowledge]: {doc}")
+                docs = role_results["documents"][0]
+                metas = role_results.get("metadatas", [[]])[0] if "metadatas" in role_results and role_results["metadatas"] else [{}] * len(docs)
+                for doc, meta in zip(docs, metas):
+                    if doc and doc.strip():
+                        sec = (meta or {}).get("section", "core_domain")
+                        role_chunks.append(f"[{sec.upper()}] {doc.strip()}")
 
-    except Exception as e:
-        context_chunks.append(f"[Fallback Context]: Core skills, architecture, and responsibilities for {state.role or 'Candidate'}")
+            if not role_chunks:
+                role_chunks.append(f"[CORE DOMAIN] Standard engineering competencies and architectural best practices for {target_role}.")
 
-    grounding_text = "\n\n".join(context_chunks)
-    return {"grounding_context": grounding_text}
+    except Exception:
+        pass
+
+    # Build clearly demarcated context sections with section provenance
+    if resume_chunks:
+        context_chunks.append(
+            "=== [Candidate Resume Experience - What candidate has done] ===\n" +
+            "\n".join(f"- {c}" for c in resume_chunks)
+        )
+    if jd_chunks:
+        context_chunks.append(
+            "=== [Target Job Description Requirements - What employer expects] ===\n" +
+            "\n".join(f"- {c}" for c in jd_chunks)
+        )
+    if role_chunks:
+        context_chunks.append(
+            f"=== [Standard Industry Best Practices for {state.effective_role}] ===\n" +
+            "\n".join(f"- {c}" for c in role_chunks)
+        )
+
+    insufficient = False
+    if not context_chunks:
+        insufficient = True
+        context_chunks.append(
+            f"=== [Standard Knowledge for {state.effective_role}] ===\n"
+            f"Assess core competencies in {state.active_focus_topic or state.effective_role}."
+        )
+
+    return {
+        "grounding_context": "\n\n".join(context_chunks),
+        "insufficient_context": insufficient
+    }
 
 
 def generate_question_node(state: QuestionState) -> Dict[str, Any]:
+    """
+    Generates structured question strictly grounded in retrieved evidence.
+    Enforces non-repetition against previous turns and validates output schema.
+    """
     if state.error:
         return {}
 
     llm = LLMClient().get_llm()
-    role = state.role or "Candidate"
+    role = state.effective_role or "Candidate"
     difficulty = state.difficulty or "beginner"
-    turn_num = len(state.history) + 1
+    turn_num = state.turn_index or (len(state.history) + 1)
+    focus_topic = state.active_focus_topic or role
+    slot_objective = state.slot_objective or "practical technical trade-offs"
 
-    # Include ALL previously asked questions to strictly enforce non-repetition
-    previous_questions_text = ""
+    # Retrieve benchmark rubric specification for current difficulty and turn
+    slot_info = get_benchmark_slot(difficulty, turn_num)
+    benchmark_category = slot_info.get("category", "Technical Concept")
+    benchmark_format = slot_info.get("format", "Scenario")
+    type_name = slot_info.get("type_name", "Technical Concept")
+    style_instructions = slot_info.get("style_instructions", "")
+    interviewer_intent = slot_info.get("interviewer_intent", "")
+    realistic_examples = slot_info.get("realistic_examples", [])
+    lvl_key = normalize_level_key(difficulty)
+
+    # Realistic few-shot examples for human interviewer tone
+    examples_block = ""
+    if realistic_examples:
+        examples_block = (
+            f"QUESTION STYLE BENCHMARKS (Style and tone guidance ONLY. Do NOT copy these questions verbatim; your question MUST focus on '{focus_topic}' for the '{role}' role):\n"
+            + "\n".join(f'  - Reference Style: "{ex}"' for ex in realistic_examples[:2])
+        )
+
+    difficulty_rules = ""
+    if lvl_key == "beginner":
+        difficulty_rules = (
+            "STRICT DIFFICULTY RULES FOR BEGINNER / JUNIOR LEVEL:\n"
+            f"- Ask a direct, foundational technical question focused on {focus_topic}: core syntax, how things work under the hood, basic coding logic, common bugs/errors, or small component structure.\n"
+            "- FORBIDDEN: Do NOT ask about microservices, distributed systems, high concurrency, CAP theorem, or architectural trade-offs.\n"
+            "- The question MUST feel like an approachable, fair technical question for a junior engineer."
+        )
+    elif lvl_key == "intermediate":
+        difficulty_rules = (
+            "CALIBRATION FOR MID-LEVEL PROFESSIONAL:\n"
+            f"- Ask about practical production implementation with {focus_topic}, framework internals (re-rendering, indexing, async event loop), subtle race conditions, error resilience, and engineering trade-offs.\n"
+            "- FORBIDDEN: Do NOT ask trivial syntax definitions ('what is a variable') or exotic multi-region consensus algorithms."
+        )
+    else:
+        difficulty_rules = (
+            "CALIBRATION FOR SENIOR / STAFF ENGINEER:\n"
+            f"- Ask about high-scale distributed systems, low-level concurrency/memory internals with {focus_topic}, cascading failure recovery, complex system design, and architectural leadership.\n"
+            "- FORBIDDEN: Do NOT ask basic trivia or surface-level CRUD walkthroughs."
+        )
+
+    # Extract all previous question texts for prompt-level negative constraint
+    previous_questions = []
     if state.history:
-        prev_list = [f"- Turn {i+1}: {h.get('question', '')}" for i, h in enumerate(state.history) if h.get("question")]
-        previous_questions_text = "Questions ALREADY asked in this session (NEVER repeat or closely rephrase any of these):\n" + "\n".join(prev_list)
+        for i, h in enumerate(state.history):
+            q_text = h.get("question", "") if isinstance(h, dict) else getattr(h, "question", "")
+            if q_text:
+                status_note = " [Skipped by candidate]" if (isinstance(h, dict) and h.get("is_skipped")) else ""
+                previous_questions.append(f"- Turn #{i+1}: {q_text}{status_note}")
 
-    system_prompt = f"""You are PrepNova's senior technical interviewer conducting an adaptive interview.
-Your goal is to generate a realistic, targeted, and clear interview question strictly grounded in the provided context, role, and difficulty level.
+    prev_questions_block = ""
+    if previous_questions:
+        prev_questions_block = (
+            "QUESTIONS ALREADY ASKED IN THIS SESSION (STRICT RULE: NEVER repeat, rephrase, or re-test any of these concepts):\n"
+            + "\n".join(previous_questions)
+        )
 
-STRICT NON-REPETITION RULES:
-- Never repeat a topic, question, or scenario that was already asked in this session.
-- If previous questions asked about architecture, transition into practical debugging, implementation trade-offs, or system edge cases.
-- Progress the interview logically like an experienced interviewer.
+    system_prompt = f"""You are PrepNova's senior technical interviewer conducting a realistic, adaptive mock interview.
+Your goal is to generate exactly ONE targeted, natural-sounding, non-repeating interview question.
 
-You MUST output valid JSON only matching this schema:
+INTERVIEW BENCHMARK SPECIFICATION FOR TURN #{turn_num}:
+- Target Category: {benchmark_category} ({type_name})
+- Target Format: {benchmark_format}
+- Slot Goal: {slot_objective}
+- Interviewer Objective: {interviewer_intent}
+- Style Instructions: {style_instructions}
+
+{difficulty_rules}
+
+{examples_block}
+
+CRITICAL RULES:
+1. SOUND LIKE A REAL HUMAN INTERVIEWER: Avoid robotic, academic essay prompts (e.g. NEVER ask 'what framework contracts do you treat as non-negotiable?'). Ask a direct, realistic question with practical context.
+2. STRICT ORIGINALITY & TOPIC GROUNDING: Generate a fresh, original question specifically for '{role}' focused on '{focus_topic}'. NEVER copy, quote, or parrot the example questions.
+3. STRICT NON-REPETITION: NEVER repeat or re-test any question or concept previously asked in this session.
+4. GROUNDING: If resume context exists, weave in their actual experience. If JD context exists, relate to employer requirements without assuming candidate knows unmentioned tech.
+
+You MUST respond strictly with valid JSON only matching this schema:
 {{
-  "question": "string containing the interview question text",
-  "category": "Resume-Based | JD-Based | Technical Concept | Scenario-Based | System Design | Debugging | Behavioral",
-  "format": "Scenario | Coding | Short Answer | Behavioral",
-  "expected_concepts": ["keyword1", "keyword2", "keyword3"],
-  "sample_answer_points": "brief description of what a good answer covers"
+  "question": "string containing the full, natural question text",
+  "category": "{benchmark_category}",
+  "format": "{benchmark_format}",
+  "focus_topic": "{focus_topic}",
+  "intent": "{interviewer_intent}",
+  "expected_concepts": ["concept1", "concept2", "concept3"],
+  "grounding_source": "resume | jd | role | general"
 }}
-Return JSON only with no markdown formatting."""
+Return valid JSON only with NO markdown fences and no extra explanation."""
 
     user_prompt = f"""Role: {role}
 Difficulty Level: {difficulty}
 Interview Mode: {state.validated_mode}
 Session Turn: #{turn_num}
-Focus Areas: {', '.join(state.focus_areas) if state.focus_areas else 'Core technical skills and responsibilities'}
+Question Type: {type_name} ({benchmark_category})
+Target Topic: {focus_topic}
+Slot Goal: {slot_objective}
 
-{previous_questions_text}
+{prev_questions_block}
 
-Retrieved Grounding Context:
----
-{state.grounding_context if state.grounding_context else f'Standard industry responsibilities and expectations for {role}.'}
----
+Retrieved Grounding Evidence:
+----------------------------------------
+{state.grounding_context}
+----------------------------------------
 
-Generate exactly one new, non-repeating interview question for Turn #{turn_num}."""
+Generate the natural interview question for Turn #{turn_num} now."""
 
-    try:
-        response = llm.invoke([
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_prompt)
-        ])
+    embedding_service = get_shared_embedding_service()
+    prev_question_texts = [
+        (h.get("question", "") if isinstance(h, dict) else getattr(h, "question", "")).strip()
+        for h in state.history if (h.get("question") if isinstance(h, dict) else getattr(h, "question", None))
+    ]
 
-        raw_content = response.content.replace("```json", "").replace("```", "").strip()
-        data = json.loads(raw_content)
+    # Bounded generation & validation loop (up to 2 attempts)
+    for attempt in range(2):
+        try:
+            response = llm.invoke([
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_prompt if attempt == 0 else f"{user_prompt}\n\nATTEMPT 2: Previous attempt was too close to an earlier turn or inappropriate for {difficulty}. Generate a fresh question testing a completely different technical angle.")
+            ])
 
-        generated = GeneratedQuestion(
-            id=f"q_{turn_num}_{abs(hash(data.get('question', '')))}",
-            question=data.get("question", f"Explain core principles and architectural trade-offs in {role}."),
-            category=data.get("category", "Technical Concept"),
-            format=data.get("format", "Scenario"),
-            difficulty=difficulty,
-            expected_concepts=data.get("expected_concepts", [role]),
-            grounding_context=state.grounding_context[:400] if state.grounding_context else None,
-            source="langgraph_rag",
-            role=role
-        )
+            raw = response.content.replace("```json", "").replace("```", "").strip()
+            data = json.loads(raw)
 
-        return {"output_question": generated}
+            candidate_q = data.get("question", "").strip()
+            if not candidate_q:
+                continue
 
-    except Exception as e:
-        fallback_pool = [
-            f"In your work with {role}, how do you approach debugging production failures and ensuring system reliability under pressure?",
-            f"Walk me through a technical trade-off you had to make in a recent {role} project regarding performance versus simplicity.",
-            f"How do you design scalable data flow and state management when building applications for {role}?",
-            f"Can you discuss a scenario where you identified a performance bottleneck or memory leak, and explain how you resolved it?",
-            f"What automated testing and code review practices do you consider essential for high-velocity teams in {role}?",
-            f"How do you handle breaking API changes or backward compatibility when evolving existing systems in {role}?"
-        ]
-        fallback_text = fallback_pool[(turn_num - 1) % len(fallback_pool)]
+            # Deterministic Repetition & Duplicate Check (tightened threshold 0.78)
+            is_dup, score, reason = is_semantic_duplicate(
+                candidate_question=candidate_q,
+                previous_questions=prev_question_texts,
+                embedding_service=embedding_service,
+                similarity_threshold=0.78,
+                jaccard_threshold=0.60
+            )
 
-        fallback_question = GeneratedQuestion(
-            id=f"q_fallback_{turn_num}_{Date_now_id()}",
-            question=fallback_text,
-            category="Scenario-Based",
-            format="Scenario",
-            difficulty=difficulty,
-            expected_concepts=[role, "architecture", "trade-offs"],
-            grounding_context=state.grounding_context[:400] if state.grounding_context else None,
-            source="fallback_diverse",
-            role=role
-        )
-        return {"output_question": fallback_question}
+            # Strict rejection: If duplicate detected on any attempt, do NOT accept it!
+            if is_dup:
+                if attempt == 0:
+                    continue
+                else:
+                    break
+
+            # Success: Assemble verified GeneratedQuestion
+            generated = GeneratedQuestion(
+                id=f"q_{turn_num}_{abs(hash(candidate_q))}",
+                question=candidate_q,
+                category=data.get("category", benchmark_category),
+                format=data.get("format", benchmark_format),
+                difficulty=difficulty,
+                expected_concepts=data.get("expected_concepts", [focus_topic]),
+                grounding_context=state.grounding_context[:450] if state.grounding_context else None,
+                source="langgraph_rag",
+                role=role,
+                focus_topic=data.get("focus_topic", focus_topic),
+                intent=data.get("intent", interviewer_intent or f"Assess {type_name} in {focus_topic}"),
+                grounding_source=data.get("grounding_source", "context")
+            )
+            return {"output_question": generated}
+
+        except Exception as e:
+            logger.warning(f"[generate_question_node] Attempt {attempt} failed with error: {e}", exc_info=True)
+            continue
+
+    # Calibrated Benchmark Fallback: specifically tailored to difficulty and turn type
+    distinct_fallback = get_calibrated_fallback_question(
+        difficulty=difficulty,
+        turn_index=turn_num,
+        focus_topic=focus_topic,
+        role=role
+    )
+
+    fallback_question = GeneratedQuestion(
+        id=f"q_fallback_{turn_num}_{Date_now_id()}",
+        question=distinct_fallback,
+        category=benchmark_category,
+        format=benchmark_format,
+        difficulty=difficulty,
+        expected_concepts=[focus_topic, type_name],
+        grounding_context=state.grounding_context[:450] if state.grounding_context else None,
+        source="calibrated_benchmark_fallback",
+        role=role,
+        focus_topic=focus_topic,
+        intent=interviewer_intent or f"Assess {type_name} in {focus_topic}",
+        grounding_source="benchmark"
+    )
+    return {"output_question": fallback_question}
 
 
 def Date_now_id():
@@ -283,11 +672,13 @@ def Date_now_id():
 def build_question_graph():
     builder = StateGraph(QuestionState)
     builder.add_node("validate_mode", validate_interview_mode_node)
+    builder.add_node("plan_blueprint", plan_blueprint_node)
     builder.add_node("retrieve_context", retrieve_context_node)
     builder.add_node("generate_question", generate_question_node)
 
     builder.add_edge(START, "validate_mode")
-    builder.add_edge("validate_mode", "retrieve_context")
+    builder.add_edge("validate_mode", "plan_blueprint")
+    builder.add_edge("plan_blueprint", "retrieve_context")
     builder.add_edge("retrieve_context", "generate_question")
     builder.add_edge("generate_question", END)
 
