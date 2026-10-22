@@ -81,25 +81,31 @@ function validateSectionBatch(batch) {
  * Validates follow-up object structure generated at runtime.
  */
 function validateFollowUp(followUp) {
+  const errors = [];
   if (!followUp || typeof followUp !== "object") {
-    return { valid: false, error: "Follow-up must be an object." };
+    return { valid: false, errors: ["Follow-up must be an object."], error: "Follow-up must be an object." };
   }
 
   const text = String(followUp.text || "").trim();
   if (!text) {
-    return { valid: false, error: "Follow-up text cannot be empty." };
+    errors.push("Follow-up text cannot be empty.");
   }
 
   if (!followUp.parentQuestionId) {
-    return { valid: false, error: "Follow-up must have a parentQuestionId." };
+    errors.push("Follow-up must specify a valid parentQuestionId.");
   }
 
-  return { valid: true };
+  return {
+    valid: errors.length === 0,
+    errors,
+    error: errors.join("; ")
+  };
 }
 
 module.exports = {
   VALID_COUNT_MODES,
   normalizeQuestionCountMode,
   validateSectionBatch,
-  validateFollowUp
+  validateFollowUp,
+  validateRuntimeFollowUp: validateFollowUp
 };

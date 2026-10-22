@@ -844,8 +844,78 @@ exports.followup = async (req, res, next) => {
       return await finalizeSessionEvaluation(session, res);
     }
 
-    // Advance to next primary question from section batches
-    const nextQuestionItem = await advanceToNextPrimaryQuestion(session);
+    let nextQuestionItem = null;
+
+    // Evaluate candidate answer at runtime for targeted follow-up
+    // Follow-ups only apply to primary questions outside the introduction section
+    const followUpsInSection = (session.questions || []).filter(
+      (q) => q.sectionId === currentQuestion.sectionId && q.questionType === "follow_up"
+    ).length;
+
+    const maxFuPerQ = 1;
+    if (
+      currentQuestion.questionType === "primary" &&
+      currentQuestion.sectionId !== "introduction" &&
+      followUpsInSection < maxFuPerQ
+    ) {
+      const activeBatch = (session.sectionBatches || []).find((b) => b.sectionId === currentQuestion.sectionId);
+      const remainingSectionQuestions = activeBatch
+        ? activeBatch.questions.filter((q) => q.status === "pending").length
+        : 0;
+
+      try {
+        const decision = await aiServiceClient.decideFollowUp({
+          sessionId: session.sessionId,
+          sectionId: currentQuestion.sectionId,
+          currentQuestionId: currentQuestion.questionId,
+          currentQuestionText: currentQuestion.question,
+          currentQuestionObjective: currentQuestion.objective,
+          submittedAnswer: String(answer).trim(),
+          isSkipped: false,
+          role: session.role,
+          difficulty: session.difficulty,
+          followUpsInSection,
+          maxFollowUpsPerQuestion: maxFuPerQ,
+          remainingSectionQuestions,
+          history: (session.answers || []).slice(-4).map((a) => ({
+            question: session.questions.find((q) => q.questionId === a.turnId)?.question || "",
+            answer: a.answer
+          }))
+        });
+
+        if (decision?.action === "FOLLOW_UP" && decision.followUp?.text) {
+          const fu = decision.followUp;
+          nextQuestionItem = {
+            questionId: `fu_${currentQuestion.questionId}_${Date.now()}`,
+            question: fu.text,
+            category: currentQuestion.sectionId,
+            format: "Follow-up",
+            difficulty: currentQuestion.difficulty || session.difficulty,
+            sectionId: currentQuestion.sectionId,
+            questionType: "follow_up",
+            parentQuestionId: currentQuestion.questionId,
+            objective: fu.objective || "Explore candidate technical depth",
+            expectedEvidence: [],
+            estimatedSeconds: 60,
+            source: "runtime_follow_up"
+          };
+
+          // Append follow-up and expand totalQuestions to preserve planned primary count
+          session.questions.push(nextQuestionItem);
+          session.totalQuestions += 1;
+          session.questionCount = session.questions.length;
+          await session.save();
+          activeSessionCache.set(session.sessionId, session.toObject());
+        }
+      } catch (err) {
+        console.warn("aiServiceClient.decideFollowUp fallback:", err.message);
+      }
+    }
+
+    // If no follow-up was generated, advance to next primary question from section batches
+    if (!nextQuestionItem) {
+      nextQuestionItem = await advanceToNextPrimaryQuestion(session);
+    }
 
     if (!nextQuestionItem) {
       return await finalizeSessionEvaluation(session, res);

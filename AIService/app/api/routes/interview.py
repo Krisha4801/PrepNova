@@ -11,7 +11,9 @@ from app.schemas.interview import (
     NextTurnRequest,
     NextTurnResponse,
     SectionBatchRequest,
-    SectionBatchResponse
+    SectionBatchResponse,
+    FollowUpDecisionRequest,
+    FollowUpDecisionResponse
 )
 from app.services.interview.graph import (
     question_workflow,
@@ -20,6 +22,7 @@ from app.services.interview.graph import (
     plan_interview_blueprint,
     generate_next_turn,
     generate_section_batch,
+    decide_runtime_follow_up,
     QuestionState,
     EvaluationState
 )
@@ -172,6 +175,23 @@ async def generate_section_batch_endpoint(request: SectionBatchRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Section batch generation error: {str(e)}"
+        )
+
+
+@router.post("/decide-followup", response_model=FollowUpDecisionResponse)
+async def decide_follow_up_endpoint(request: FollowUpDecisionRequest):
+    """
+    Evaluates submitted candidate answer at runtime and decides next conversational action.
+    Generates targeted follow-up question if substantive technical claim warrants probing,
+    or advances to next primary question/section.
+    Skipped questions never produce follow-ups or false acknowledgments.
+    """
+    try:
+        return decide_runtime_follow_up(request)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Follow-up decision error: {str(e)}"
         )
 
 

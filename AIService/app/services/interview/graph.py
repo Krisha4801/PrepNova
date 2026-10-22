@@ -2096,6 +2096,136 @@ def generate_section_batch(request: SectionBatchRequest) -> SectionBatchResponse
 
 
 # =========================================================
+# RUNTIME POST-ANSWER FOLLOW-UP DECISION ENGINE
+# =========================================================
+
+def is_non_answer(text: str) -> bool:
+    """Checks if candidate's response is an explicit non-answer or pass."""
+    normalized = re.sub(r"[^a-z0-9']+", " ", (text or "").lower()).strip()
+    if not normalized or len(normalized) < 4:
+        return True
+    pattern = r"^(?:idk|i do not know|i don't know|i dont know|dont know|no idea|i have no idea|not sure|i am not sure|i'm not sure|no clue|pass|skip|i cannot answer|i can't answer)$"
+    return bool(re.match(pattern, normalized))
+
+
+def decide_runtime_follow_up(request: FollowUpDecisionRequest) -> FollowUpDecisionResponse:
+    """
+    Evaluates submitted answer at runtime and decides next conversational action:
+    - FOLLOW_UP: Targeted clarification on candidate's real answer.
+    - NEXT_PRIMARY: Move to next primary question in active section.
+    - NEXT_SECTION: Transition to next section if section complete.
+    - COMPLETE: Finalize session if all questions complete.
+    Enforces that skipped or non-answers NEVER trigger follow-ups.
+    """
+    section_id = getattr(request, "sectionId", None) or getattr(request, "section_id", "introduction")
+    is_skipped = bool(getattr(request, "isSkipped", False) or getattr(request, "is_skipped", False))
+    answer_text = str(getattr(request, "submittedAnswer", None) or getattr(request, "submitted_answer", "") or "").strip()
+    follow_ups_in_sec = int(getattr(request, "followUpsInSection", None) or getattr(request, "follow_ups_in_section", 0))
+    max_fu = int(getattr(request, "maxFollowUpsPerQuestion", None) or getattr(request, "max_follow_ups_per_question", 1))
+    remaining = int(getattr(request, "remainingSectionQuestions", None) or getattr(request, "remaining_section_questions", 0))
+    curr_q_id = getattr(request, "currentQuestionId", None) or getattr(request, "current_question_id", "curr_q")
+    curr_q_text = getattr(request, "currentQuestionText", None) or getattr(request, "current_question_text", "")
+    curr_q_obj = getattr(request, "currentQuestionObjective", None) or getattr(request, "current_question_objective", "")
+
+    # Rule 1: Skipped questions or explicit non-answers NEVER trigger follow-ups
+    if is_skipped or is_non_answer(answer_text):
+        action = "NEXT_PRIMARY" if remaining > 0 else "NEXT_SECTION"
+        return FollowUpDecisionResponse(
+            action=action,
+            follow_up=None,
+            reason="Question was skipped or contained no substantive answer"
+        )
+
+    # Rule 2: Introduction section never generates technical follow-up
+    if section_id == "introduction":
+        return FollowUpDecisionResponse(
+            action="NEXT_SECTION",
+            follow_up=None,
+            reason="Introduction turn completed, transitioning to first technical section"
+        )
+
+    # Rule 3: Enforce follow-up limits
+    if follow_ups_in_sec >= max_fu:
+        action = "NEXT_PRIMARY" if remaining > 0 else "NEXT_SECTION"
+        return FollowUpDecisionResponse(
+            action=action,
+            follow_up=None,
+            reason="Section follow-up limit reached"
+        )
+
+    # Rule 4: Evaluate whether answer warrants clarification/probing
+    if len(answer_text) < 35:
+        action = "NEXT_PRIMARY" if remaining > 0 else "NEXT_SECTION"
+        return FollowUpDecisionResponse(
+            action=action,
+            follow_up=None,
+            reason="Answer too brief to warrant probing, moving forward"
+        )
+
+    try:
+        llm = LLMClient().get_llm()
+        system_prompt = (
+            "You are PrepNova's senior technical interviewer deciding whether to ask a targeted follow-up question.\n"
+            "RULES:\n"
+            "1. ONLY follow up if the candidate mentioned a specific technical claim, architecture choice, or tool that warrants deeper probing (e.g. asking why they chose Redis over Memcached, or how they mitigated race conditions).\n"
+            "2. If the answer adequately answered the question or has nothing specific to probe, do NOT follow up. Set action to 'NEXT_PRIMARY'.\n"
+            "3. ZERO FILLER: NEVER use conversational filler ('Okay', 'Thank you for sharing', 'Great', 'Based on what you said'). Start the question directly.\n"
+            "4. NEVER invent candidate facts. Only probe what the candidate ACTUALLY stated.\n"
+            "5. OUTPUT FORMAT (JSON only):\n"
+            "{\n"
+            '  "action": "FOLLOW_UP" | "NEXT_PRIMARY",\n'
+            '  "follow_up_text": "direct follow-up question without filler or empty string",\n'
+            '  "objective": "specific probing objective or empty string",\n'
+            '  "reason": "short explanation of decision"\n'
+            "}"
+        )
+
+        user_prompt = (
+            f"Role: {request.role}\n"
+            f"Difficulty: {request.difficulty}\n"
+            f"Section: {section_id}\n"
+            f"Question Asked: {curr_q_text}\n"
+            f"Question Objective: {curr_q_obj}\n"
+            f"Candidate Answer: {answer_text}\n\n"
+            "Decide if a follow-up is warranted and output valid JSON now."
+        )
+
+        resp = llm.invoke([
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
+        ])
+        raw_json = resp.content.replace("```json", "").replace("```", "").strip()
+        data = json.loads(raw_json)
+
+        action = str(data.get("action", "NEXT_PRIMARY")).upper()
+        if action == "FOLLOW_UP" and data.get("follow_up_text"):
+            cleaned_text = clean_conversational_filler(str(data["follow_up_text"]).strip())
+            if len(cleaned_text) >= 15:
+                fu = RuntimeFollowUp(
+                    type="follow_up",
+                    parent_question_id=curr_q_id,
+                    section_id=section_id,
+                    objective=str(data.get("objective") or "Explore candidate technical depth"),
+                    text=cleaned_text,
+                    context_references=["candidate_answer"]
+                )
+                return FollowUpDecisionResponse(
+                    action="FOLLOW_UP",
+                    follow_up=fu,
+                    reason=str(data.get("reason") or "Candidate technical claim warranted probing")
+                )
+    except Exception as e:
+        logger.debug(f"decide_runtime_follow_up LLM error, defaulting to NEXT_PRIMARY: {e}")
+
+    action = "NEXT_PRIMARY" if remaining > 0 else "NEXT_SECTION"
+    return FollowUpDecisionResponse(
+        action=action,
+        follow_up=None,
+        reason="Answer adequately addressed question objective, advancing to next question"
+    )
+
+
+# =========================================================
 # CONVERSATIONAL TURN ENGINE (SPECIFICATION PHASE 4)
 # =========================================================
 
