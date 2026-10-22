@@ -3,7 +3,7 @@ import logging
 import re
 import math
 import numpy as np
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from pydantic import BaseModel, Field
 
 from langgraph.graph import StateGraph, START, END
@@ -1139,6 +1139,186 @@ evaluation_workflow = build_evaluation_graph()
 # INTERVIEW BLUEPRINT PLANNER (SPECIFICATION PHASE 3)
 # =========================================================
 
+def extract_context_evidence(
+    user_id: Optional[str],
+    resume_id: Optional[str],
+    jd_id: Optional[str]
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """
+    Extracts evidence from indexed document chunks in ChromaStore to inform
+    section-specific question planning. Safe against missing collections or documents.
+    """
+    resume_evidence: Dict[str, Any] = {"has_projects": False, "chunk_count": 0, "has_work_experience": False}
+    jd_evidence: Dict[str, Any] = {"has_requirements": False, "chunk_count": 0, "has_system_design": False}
+
+    if not user_id:
+        return resume_evidence, jd_evidence
+
+    try:
+        store = ChromaStore()
+        if resume_id:
+            res = store.search(
+                query="projects experience technical skills technologies architecture",
+                user_id=user_id,
+                document_id=resume_id,
+                top_k=6
+            )
+            if res and "documents" in res and res["documents"] and res["documents"][0]:
+                chunks = [d for d in res["documents"][0] if d and d.strip()]
+                resume_evidence["chunk_count"] = len(chunks)
+                text = " ".join(chunks).lower()
+                resume_evidence["has_projects"] = any(
+                    w in text for w in ["project", "developed", "built", "designed", "implemented", "architecture", "created"]
+                )
+                resume_evidence["has_work_experience"] = any(
+                    w in text for w in ["work experience", "employment", "company", "internship", "engineer at", "developer at"]
+                )
+        if jd_id:
+            res = store.search(
+                query="responsibilities requirements qualifications tech stack skills",
+                user_id=user_id,
+                document_id=jd_id,
+                top_k=6
+            )
+            if res and "documents" in res and res["documents"] and res["documents"][0]:
+                chunks = [d for d in res["documents"][0] if d and d.strip()]
+                jd_evidence["chunk_count"] = len(chunks)
+                text = " ".join(chunks).lower()
+                jd_evidence["has_requirements"] = any(
+                    w in text for w in ["requirement", "responsibilit", "qualification", "experience with", "proficiency", "must have"]
+                )
+                jd_evidence["has_system_design"] = any(
+                    w in text for w in ["system design", "distributed", "scalab", "microservices", "cloud", "aws", "kubernetes"]
+                )
+    except Exception as e:
+        logger.debug(f"extract_context_evidence search error: {e}")
+
+    return resume_evidence, jd_evidence
+
+
+def calculate_dynamic_section_counts(
+    request: PlanBlueprintRequest,
+    section_ids: List[str],
+    has_resume: bool,
+    has_jd: bool,
+    resume_evidence: Optional[Dict[str, Any]] = None,
+    jd_evidence: Optional[Dict[str, Any]] = None
+) -> Dict[str, int]:
+    """
+    Computes per-section primary question counts dynamically based on:
+    - Target duration (15m, 30m, 45m, 60m, etc.)
+    - Role title & seniority level (junior vs senior/lead)
+    - Available context evidence (resume projects, JD requirements, focus areas)
+    - Section importance and breadth
+    Enforces strict bounds: min 1 per applicable section, max 10 per section.
+    Introduction is always allocated exactly 1 primary question.
+    """
+    resume_evidence = resume_evidence or {}
+    jd_evidence = jd_evidence or {}
+
+    role_str = (request.role or "").lower()
+    diff_str = (
+        request.difficulty.value if hasattr(request.difficulty, "value")
+        else str(request.difficulty or "")
+    ).lower()
+
+    is_senior = (
+        any(w in role_str for w in ["senior", "lead", "staff", "principal", "architect", "manager", "head"])
+        or diff_str == "advanced"
+    )
+    is_junior = (
+        any(w in role_str for w in ["intern", "junior", "associate", "trainee", "fresher", "entry"])
+        or diff_str == "beginner"
+    )
+
+    # Base importance weights per section
+    weights: Dict[str, float] = {
+        "projects": 1.0,
+        "experience": 0.9,
+        "skills": 1.1,
+        "technical_concepts": 1.1,
+        "scenario": 1.0,
+        "behavioral": 0.8,
+    }
+
+    # 1. Projects: Juniors / candidates with rich resume projects get more project questions
+    if has_resume:
+        weights["projects"] += 0.4
+        if resume_evidence.get("has_projects"):
+            weights["projects"] += 0.3
+    else:
+        weights["projects"] -= 0.3
+
+    if is_junior:
+        weights["projects"] += 0.3
+
+    # 2. Work Experience: Seniors & candidates with documented job history
+    if "experience" in weights:
+        if is_senior:
+            weights["experience"] += 0.4
+        if resume_evidence.get("has_work_experience"):
+            weights["experience"] += 0.3
+        if is_junior and not has_resume:
+            weights["experience"] -= 0.3
+
+    # 3. Core Skills: JD tech stack & user focus areas
+    if has_jd:
+        weights["skills"] += 0.3
+        if jd_evidence.get("has_requirements"):
+            weights["skills"] += 0.2
+    if request.focus_areas:
+        weights["skills"] += 0.3
+
+    # 4. Technical Concepts: Core language mechanics, runtime internals
+    if is_senior:
+        weights["technical_concepts"] += 0.3
+    elif is_junior:
+        weights["technical_concepts"] += 0.1
+
+    # 5. Scenario & Problem Solving: System design, trade-offs, scaling
+    if is_senior:
+        weights["scenario"] += 0.5
+    if jd_evidence.get("has_system_design"):
+        weights["scenario"] += 0.3
+    if is_junior:
+        weights["scenario"] -= 0.3
+
+    # 6. Behavioral: Seniors and leadership roles get more behavioral/conflict/mentorship
+    if is_senior:
+        weights["behavioral"] += 0.3
+    if is_junior:
+        weights["behavioral"] -= 0.2
+
+    # Prevent non-positive weights
+    for sid in weights:
+        weights[sid] = max(0.4, weights[sid])
+
+    # Target total primary question budget based on duration
+    duration = int(request.target_duration_minutes or 30)
+    applicable_non_intro = [sid for sid in section_ids if sid != "introduction" and sid in weights]
+    if not applicable_non_intro:
+        return {"introduction": 1}
+
+    # Scaled total question target with duration:
+    # 15 min -> ~6 total; 30 min -> ~13 total; 45 min -> ~19 total; 60 min -> ~26 total
+    estimated_total = max(len(applicable_non_intro) + 1, round(duration / 2.3))
+    
+    # Intro gets exactly 1
+    remaining_budget = max(len(applicable_non_intro), estimated_total - 1)
+
+    total_weight = sum(weights[sid] for sid in applicable_non_intro)
+    counts: Dict[str, int] = {"introduction": 1}
+
+    for sid in applicable_non_intro:
+        w = weights[sid]
+        raw_count = round(remaining_budget * (w / total_weight))
+        # Enforce bounds: min 1, max 10
+        bounded_count = max(1, min(10, raw_count))
+        counts[sid] = bounded_count
+
+    return counts
+
+
 def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprint:
     """
     Creates and returns a deterministic, role- and duration-calibrated Interview Blueprint.
@@ -1179,6 +1359,13 @@ def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprin
         "focus_areas": bool(request.focus_areas),
     }
 
+    # Extract context evidence for dynamic planning
+    resume_evidence, jd_evidence = extract_context_evidence(
+        user_id=request.user_id,
+        resume_id=request.resume_id,
+        jd_id=request.jd_id
+    )
+
     # Determine per-section question count mode
     raw_mode = getattr(request, "question_count_mode", None)
     if raw_mode is None and getattr(request, "max_questions", None) in [3, 6, 10]:
@@ -1187,16 +1374,32 @@ def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprin
     if count_mode not in ["3", "6", "10", "dynamic"]:
         count_mode = "6"
 
-    if count_mode == "3":
-        per_section_target = 3
-    elif count_mode == "10":
-        per_section_target = 10
-    elif count_mode == "dynamic":
-        per_section_target = 4
+    # Plan candidate sections
+    candidate_section_ids = ["introduction", "projects"]
+    include_experience = target_duration >= 35 or (has_resume and resume_evidence.get("has_work_experience", False))
+    if include_experience:
+        candidate_section_ids.append("experience")
+    candidate_section_ids.extend(["skills", "technical_concepts", "scenario", "behavioral"])
+
+    dynamic_counts: Dict[str, int] = {}
+    if count_mode == "dynamic":
+        dynamic_counts = calculate_dynamic_section_counts(
+            request=request,
+            section_ids=candidate_section_ids,
+            has_resume=has_resume,
+            has_jd=has_jd,
+            resume_evidence=resume_evidence,
+            jd_evidence=jd_evidence
+        )
+        def get_count(sec_id: str) -> int:
+            return dynamic_counts.get(sec_id, 3 if sec_id != "introduction" else 1)
     else:
-        per_section_target = 6
+        per_section_target = int(count_mode)
+        def get_count(sec_id: str) -> int:
+            return 1 if sec_id == "introduction" else per_section_target
 
     # Section 1: Introduction (Mandatory, always 1 opening primary question)
+    intro_count = get_count("introduction")
     sections = [
         BlueprintSection(
             id="introduction",
@@ -1204,8 +1407,8 @@ def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprin
             title="Candidate Introduction & Alignment",
             objective="Assess communication structure, conciseness, and alignment with target role",
             priority="high",
-            target_question_count=1,
-            planned_primary_question_count=1,
+            target_question_count=intro_count,
+            planned_primary_question_count=intro_count,
             target_minutes=3.0 if target_duration >= 30 else 2.0,
             difficulty=[difficulty],
             context_refs=["role"],
@@ -1226,6 +1429,7 @@ def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprin
     else:
         proj_obj = "Assess technical ownership, architecture choices, debugging challenges, and measurable impact"
 
+    proj_count = get_count("projects")
     sections.append(
         BlueprintSection(
             id="projects",
@@ -1233,19 +1437,20 @@ def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprin
             title="Key Projects & Personal Ownership",
             objective=proj_obj,
             priority="high",
-            target_question_count=per_section_target,
-            planned_primary_question_count=per_section_target,
+            target_question_count=proj_count,
+            planned_primary_question_count=proj_count,
             target_minutes=5.0 if target_duration >= 30 else 4.0,
             difficulty=[difficulty],
             context_refs=["resume"] if has_resume else ["role"],
             competencies=["system_architecture", "debugging", "ownership"],
             applicable=True,
-            skip_reason=None if has_resume else "General project prompt used as no resume was uploaded"
+            skip_reason=None if has_resume else "General role-based project questions used as no resume was uploaded"
         )
     )
 
-    # Section 3: Work / Internship Experience (for sessions >= 35 mins)
-    if target_duration >= 35:
+    # Section 3: Work / Internship Experience (for sessions >= 35 mins or with work experience evidence)
+    if include_experience:
+        exp_count = get_count("experience")
         sections.append(
             BlueprintSection(
                 id="experience",
@@ -1253,8 +1458,8 @@ def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprin
                 title="Work Experience & Collaboration",
                 objective="Assess team collaboration, agile delivery, system ownership, and mentoring/learning",
                 priority="medium",
-                target_question_count=per_section_target,
-                planned_primary_question_count=per_section_target,
+                target_question_count=exp_count,
+                planned_primary_question_count=exp_count,
                 target_minutes=5.0,
                 difficulty=[difficulty],
                 context_refs=["resume"] if has_resume else ["role"],
@@ -1275,6 +1480,7 @@ def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprin
     else:
         skills_obj = f"Assess depth and hands-on application of core {role} skills"
 
+    skills_count = get_count("skills")
     sections.append(
         BlueprintSection(
             id="skills",
@@ -1282,8 +1488,8 @@ def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprin
             title="Core Skills & Practical Application",
             objective=skills_obj,
             priority="high",
-            target_question_count=per_section_target,
-            planned_primary_question_count=per_section_target,
+            target_question_count=skills_count,
+            planned_primary_question_count=skills_count,
             target_minutes=5.0 if target_duration >= 30 else 3.0,
             difficulty=[difficulty],
             context_refs=["resume", "jd"] if (has_resume and has_jd) else ["role"],
@@ -1293,6 +1499,7 @@ def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprin
     )
 
     # Section 5: Technical Fundamentals & Architecture
+    tech_count = get_count("technical_concepts")
     sections.append(
         BlueprintSection(
             id="technical_concepts",
@@ -1300,8 +1507,8 @@ def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprin
             title="Technical Fundamentals & Language Mechanics",
             objective="Assess core language semantics, runtime internals, memory/async handling, and clean code principles",
             priority="high",
-            target_question_count=per_section_target,
-            planned_primary_question_count=per_section_target,
+            target_question_count=tech_count,
+            planned_primary_question_count=tech_count,
             target_minutes=5.0 if target_duration >= 30 else 3.0,
             difficulty=[difficulty],
             context_refs=["role"],
@@ -1320,6 +1527,7 @@ def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprin
     else:
         scen_obj = "Assess trade-off analysis, performance diagnosis, failure resilience, and architectural reasoning under constraints"
 
+    scen_count = get_count("scenario")
     sections.append(
         BlueprintSection(
             id="scenario",
@@ -1327,8 +1535,8 @@ def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprin
             title="Scenario & Applied Problem Solving",
             objective=scen_obj,
             priority="high",
-            target_question_count=per_section_target,
-            planned_primary_question_count=per_section_target,
+            target_question_count=scen_count,
+            planned_primary_question_count=scen_count,
             target_minutes=6.0 if target_duration >= 30 else 4.0,
             difficulty=[difficulty],
             context_refs=["jd"] if has_jd else ["role"],
@@ -1338,6 +1546,7 @@ def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprin
     )
 
     # Section 7: HR / Behavioral
+    beh_count = get_count("behavioral")
     sections.append(
         BlueprintSection(
             id="behavioral",
@@ -1345,8 +1554,8 @@ def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprin
             title="Behavioral & Professional Communication",
             objective="Assess conflict resolution, adaptability, ownership of mistakes, and teamwork using STAR principles",
             priority="medium",
-            target_question_count=per_section_target,
-            planned_primary_question_count=per_section_target,
+            target_question_count=beh_count,
+            planned_primary_question_count=beh_count,
             target_minutes=4.0 if target_duration >= 30 else 2.0,
             difficulty=[difficulty],
             context_refs=["role"],
@@ -1356,6 +1565,12 @@ def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprin
     )
 
     total_planned = sum(s.planned_primary_question_count for s in sections if s.applicable)
+
+    # In dynamic mode, calibrate target_minutes proportionally across applicable sections
+    if count_mode == "dynamic" and total_planned > 0:
+        for s in sections:
+            if s.applicable:
+                s.target_minutes = max(1.5, round((s.planned_primary_question_count / total_planned) * target_duration, 1))
 
     return InterviewBlueprint(
         version=1,
