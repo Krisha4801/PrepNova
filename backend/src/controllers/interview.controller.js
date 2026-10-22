@@ -3,6 +3,7 @@ const Resume = require("../models/Resume");
 const JobDescription = require("../models/JobDescription");
 const { findQuestion } = require("../services/questionBank.service");
 const { aiServiceClient } = require("../services/aiService.client");
+const { normalizeQuestionCountMode } = require("../validators/interview.validator");
 const {
   LEVELS,
   evaluateAnswer: fallbackEvaluateAnswer,
@@ -262,11 +263,14 @@ exports.startInterview = async (req, res, next) => {
     const selectedLevel = normalizeLevel(level) || "beginner";
     const sessionId = createSessionId();
     const durationMinutes = Math.round(Number(req.body.durationMinutes) || 30);
+    const questionCountMode = normalizeQuestionCountMode(
+      req.body.questionCountMode || req.body.maxQuestions || req.body.numberOfQuestions || req.body.questionCount
+    );
     const requestedMaxQuestions = req.body.maxQuestions || req.body.numberOfQuestions
       ? Math.max(1, Math.min(20, Number(req.body.maxQuestions || req.body.numberOfQuestions)))
       : null;
 
-    // Call LangGraph AI engine to generate interview blueprint
+    // Call LangGraph AI engine to generate interview blueprint with per-section count mode
     let blueprint = null;
     try {
       blueprint = await aiServiceClient.planBlueprint({
@@ -278,6 +282,7 @@ exports.startInterview = async (req, res, next) => {
         jdId: effectiveJdId,
         jdTitle: jdTitle || undefined,
         targetDurationMinutes: durationMinutes,
+        questionCountMode,
         maxQuestions: requestedMaxQuestions,
         focusAreas: Array.isArray(focusAreas) ? focusAreas : []
       });
@@ -288,38 +293,57 @@ exports.startInterview = async (req, res, next) => {
       console.warn("Blueprint planning fallback:", blueprintErr.message);
     }
 
-    // Role-only sessions begin with the static role bank. Other modes use the intro prompt.
-    const openingBankQuestion = mode === "role"
-      ? findQuestion({ role: selectedRole, level: selectedLevel })
-      : { found: false };
-    const introQuestionText = openingBankQuestion.found
-      ? openingBankQuestion.question
-      : `Hello! To get started, could you please introduce yourself and highlight the key experiences, skills, and projects most relevant to this ${selectedRole} position?`;
+    // Fallback blueprint if AI service unavailable or returns incomplete structure
+    const perSectionTarget = questionCountMode === "3" ? 3 : questionCountMode === "10" ? 10 : questionCountMode === "dynamic" ? 4 : 6;
+    if (!blueprint || !Array.isArray(blueprint.sections) || blueprint.sections.length === 0) {
+      blueprint = {
+        version: 1,
+        role: selectedRole,
+        difficulty: selectedLevel,
+        target_duration_minutes: durationMinutes,
+        question_count_mode: questionCountMode,
+        sections: [
+          { id: "introduction", type: "introduction", title: "Candidate Introduction & Alignment", planned_primary_question_count: 1, applicable: true },
+          { id: "projects", type: "projects", title: "Key Projects & Personal Ownership", planned_primary_question_count: perSectionTarget, applicable: true },
+          { id: "skills", type: "skills", title: "Core Skills & Practical Application", planned_primary_question_count: perSectionTarget, applicable: true },
+          { id: "technical_concepts", type: "technical_concepts", title: "Technical Fundamentals & Language Mechanics", planned_primary_question_count: perSectionTarget, applicable: true },
+          { id: "scenario", type: "scenario", title: "Scenario & Applied Problem Solving", planned_primary_question_count: perSectionTarget, applicable: true },
+          { id: "behavioral", type: "behavioral", title: "Behavioral & Professional Communication", planned_primary_question_count: perSectionTarget, applicable: true }
+        ]
+      };
+    }
+
+    // Calculate planned primary question counts per section
+    const plannedSectionCounts = {};
+    let totalPlannedQuestions = 0;
+    blueprint.sections.forEach((sec) => {
+      if (sec.applicable !== false) {
+        const cnt = Number(sec.planned_primary_question_count || sec.target_question_count || (sec.id === "introduction" ? 1 : perSectionTarget));
+        plannedSectionCounts[sec.id] = cnt;
+        totalPlannedQuestions += cnt;
+      }
+    });
+    const totalQuestions = totalPlannedQuestions > 0 ? totalPlannedQuestions : MAX_QUESTIONS;
+
+    // Turn 0 is always the opening candidate self-introduction in the introduction section
+    const introQuestionText = `Hello! To get started, could you please introduce yourself and highlight the key experiences, skills, and projects most relevant to this ${selectedRole} position?`;
 
     const firstQuestionItem = {
-      questionId: openingBankQuestion.found ? openingBankQuestion.id : `turn_0_${Date.now()}`,
+      questionId: `turn_0_${Date.now()}`,
       question: introQuestionText,
       category: "Introduction",
       format: "Open",
       difficulty: selectedLevel,
       groundingContext: null,
       expectedConcepts: [selectedRole],
-      expectedAnswer: openingBankQuestion.expectedAnswer || null,
-      source: openingBankQuestion.source || "conversational_engine",
-      sectionId: openingBankQuestion.found ? "technical" : "introduction",
+      expectedAnswer: null,
+      source: "conversational_engine",
+      sectionId: "introduction",
       questionType: "primary",
       estimatedSeconds: 90
     };
 
-    const totalQuestions = requestedMaxQuestions || (blueprint?.sections?.length ? blueprint.sections.length : MAX_QUESTIONS);
-
-    if (blueprint && Array.isArray(blueprint.sections) && blueprint.sections.length > totalQuestions) {
-      const intro = blueprint.sections.find(s => s.section_id === "introduction") || blueprint.sections[0];
-      const others = blueprint.sections.filter(s => s !== intro);
-      blueprint.sections = [intro, ...others.slice(0, Math.max(0, totalQuestions - 1))];
-    }
-
-    // Create durable session in MongoDB
+    // Create durable session in MongoDB with per-section count mode and planned section counts
     const sessionDoc = await InterviewSession.create({
       userId,
       sessionId,
@@ -331,6 +355,11 @@ exports.startInterview = async (req, res, next) => {
       status: "in_progress",
       reportStatus: "not_started",
       blueprint,
+      questionCountMode,
+      currentSectionId: "introduction",
+      currentBatchQuestionIndex: 0,
+      plannedSectionCounts,
+      sectionBatches: [],
       totalQuestions,
       questionCount: 1,
       questions: [firstQuestionItem],
@@ -351,6 +380,8 @@ exports.startInterview = async (req, res, next) => {
       source: firstQuestionItem.source,
       matchedRole: selectedRole,
       mode,
+      questionCountMode,
+      plannedSectionCounts,
       availableRoles: getAvailableRoles(),
       availableLevels: LEVELS,
       progress: {

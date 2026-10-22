@@ -17,9 +17,14 @@ export default function useInterviewConfig() {
       localStorage.getItem(STORAGE_KEYS.DIFFICULTY) ||
       INTERVIEW_DEFAULTS.DIFFICULTY,
     totalQuestions:
-      state?.questionCount ||
+      (typeof state?.questionCount === 'number' && state.questionCount) ||
       Number(localStorage.getItem('prepnova_question_count')) ||
       INTERVIEW_DEFAULTS.QUESTION_COUNT,
+    questionCountMode:
+      state?.questionCountMode ||
+      state?.questionCount ||
+      localStorage.getItem('prepnova_question_count') ||
+      '6',
     firstQuestion: state?.firstQuestion || null,
     resumeId: state?.resumeId || localStorage.getItem('prepnova_resume_id') || null,
     jdId: state?.jdId || localStorage.getItem('prepnova_jd_id') || null,

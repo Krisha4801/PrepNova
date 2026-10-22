@@ -39,9 +39,9 @@ export default function CustomizeInterviewPage() {
   // Section 2: Difficulty
   const [difficulty, setDifficulty] = useState('intermediate');
 
-  // Section 3: Question Count
+  // Section 3: Question Count Mode (per applicable section)
   const [questionCount, setQuestionCount] = useState(() => {
-    return Number(localStorage.getItem('prepnova_question_count')) || 6;
+    return localStorage.getItem('prepnova_question_count') || '6';
   });
 
   // Section 4: Mode
@@ -224,25 +224,40 @@ export default function CustomizeInterviewPage() {
           {/* Question Count & Interaction Mode */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
-                Question Count
-              </label>
-              <div className="grid grid-cols-3 gap-2">
-                {[3, 6, 10].map((count) => (
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                  Questions Per Section
+                </label>
+                <span className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400">
+                  {String(questionCount).toLowerCase() === 'dynamic' ? 'AI Dynamic' : `${questionCount} / sec`}
+                </span>
+              </div>
+              <div className="grid grid-cols-4 gap-2">
+                {[
+                  { id: '3', label: '3' },
+                  { id: '6', label: '6' },
+                  { id: '10', label: '10' },
+                  { id: 'dynamic', label: 'Dynamic' }
+                ].map((opt) => (
                   <button
-                    key={count}
+                    key={opt.id}
                     type="button"
-                    onClick={() => setQuestionCount(count)}
+                    onClick={() => setQuestionCount(opt.id)}
                     className={`py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
-                      questionCount === count
+                      String(questionCount).toLowerCase() === opt.id
                         ? 'border-indigo-600 bg-indigo-600 text-white shadow-xs'
                         : 'border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
                     }`}
                   >
-                    {count} Questions
+                    {opt.label}
                   </button>
                 ))}
               </div>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
+                {String(questionCount).toLowerCase() === 'dynamic'
+                  ? 'AI calibrates primary question depth and count for each section individually.'
+                  : `Generates ${questionCount} primary questions for each applicable interview section.`}
+              </p>
             </div>
 
             <div className="space-y-1.5">

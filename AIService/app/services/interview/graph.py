@@ -1179,7 +1179,24 @@ def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprin
         "focus_areas": bool(request.focus_areas),
     }
 
-    # Section 1: Introduction (Mandatory, never skipped)
+    # Determine per-section question count mode
+    raw_mode = getattr(request, "question_count_mode", None)
+    if raw_mode is None and getattr(request, "max_questions", None) in [3, 6, 10]:
+        raw_mode = str(request.max_questions)
+    count_mode = str(raw_mode or "6").lower().strip()
+    if count_mode not in ["3", "6", "10", "dynamic"]:
+        count_mode = "6"
+
+    if count_mode == "3":
+        per_section_target = 3
+    elif count_mode == "10":
+        per_section_target = 10
+    elif count_mode == "dynamic":
+        per_section_target = 4
+    else:
+        per_section_target = 6
+
+    # Section 1: Introduction (Mandatory, always 1 opening primary question)
     sections = [
         BlueprintSection(
             id="introduction",
@@ -1188,9 +1205,11 @@ def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprin
             objective="Assess communication structure, conciseness, and alignment with target role",
             priority="high",
             target_question_count=1,
+            planned_primary_question_count=1,
             target_minutes=3.0 if target_duration >= 30 else 2.0,
             difficulty=[difficulty],
             context_refs=["role"],
+            competencies=["communication", "role_alignment"],
             applicable=True
         )
     ]
@@ -1214,10 +1233,12 @@ def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprin
             title="Key Projects & Personal Ownership",
             objective=proj_obj,
             priority="high",
-            target_question_count=1,
+            target_question_count=per_section_target,
+            planned_primary_question_count=per_section_target,
             target_minutes=5.0 if target_duration >= 30 else 4.0,
             difficulty=[difficulty],
             context_refs=["resume"] if has_resume else ["role"],
+            competencies=["system_architecture", "debugging", "ownership"],
             applicable=True,
             skip_reason=None if has_resume else "General project prompt used as no resume was uploaded"
         )
@@ -1232,10 +1253,12 @@ def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprin
                 title="Work Experience & Collaboration",
                 objective="Assess team collaboration, agile delivery, system ownership, and mentoring/learning",
                 priority="medium",
-                target_question_count=1,
+                target_question_count=per_section_target,
+                planned_primary_question_count=per_section_target,
                 target_minutes=5.0,
                 difficulty=[difficulty],
                 context_refs=["resume"] if has_resume else ["role"],
+                competencies=["collaboration", "agile", "delivery"],
                 applicable=True
             )
         )
@@ -1259,10 +1282,12 @@ def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprin
             title="Core Skills & Practical Application",
             objective=skills_obj,
             priority="high",
-            target_question_count=1,
+            target_question_count=per_section_target,
+            planned_primary_question_count=per_section_target,
             target_minutes=5.0 if target_duration >= 30 else 3.0,
             difficulty=[difficulty],
             context_refs=["resume", "jd"] if (has_resume and has_jd) else ["role"],
+            competencies=["core_technologies", "frameworks", "libraries"],
             applicable=True
         )
     )
@@ -1275,10 +1300,12 @@ def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprin
             title="Technical Fundamentals & Language Mechanics",
             objective="Assess core language semantics, runtime internals, memory/async handling, and clean code principles",
             priority="high",
-            target_question_count=1,
+            target_question_count=per_section_target,
+            planned_primary_question_count=per_section_target,
             target_minutes=5.0 if target_duration >= 30 else 3.0,
             difficulty=[difficulty],
             context_refs=["role"],
+            competencies=["language_mechanics", "concurrency", "algorithms"],
             applicable=True
         )
     )
@@ -1300,10 +1327,12 @@ def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprin
             title="Scenario & Applied Problem Solving",
             objective=scen_obj,
             priority="high",
-            target_question_count=1,
+            target_question_count=per_section_target,
+            planned_primary_question_count=per_section_target,
             target_minutes=6.0 if target_duration >= 30 else 4.0,
             difficulty=[difficulty],
             context_refs=["jd"] if has_jd else ["role"],
+            competencies=["problem_solving", "trade_offs", "scaling"],
             applicable=True
         )
     )
@@ -1316,24 +1345,25 @@ def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprin
             title="Behavioral & Professional Communication",
             objective="Assess conflict resolution, adaptability, ownership of mistakes, and teamwork using STAR principles",
             priority="medium",
-            target_question_count=1,
+            target_question_count=per_section_target,
+            planned_primary_question_count=per_section_target,
             target_minutes=4.0 if target_duration >= 30 else 2.0,
             difficulty=[difficulty],
             context_refs=["role"],
+            competencies=["communication", "conflict_resolution", "teamwork"],
             applicable=True
         )
     )
 
-    if request.max_questions and request.max_questions > 0 and len(sections) > request.max_questions:
-        intro_section = sections[0]
-        other_sections = sections[1:]
-        sections = [intro_section] + other_sections[:request.max_questions - 1]
+    total_planned = sum(s.planned_primary_question_count for s in sections if s.applicable)
 
     return InterviewBlueprint(
         version=1,
         role=role,
         difficulty=difficulty,
         target_duration_minutes=target_duration,
+        question_count_mode=count_mode,
+        total_planned_primary_questions=total_planned,
         sections=sections,
         global_rules={
             "maxFollowUpsPerQuestion": 1,

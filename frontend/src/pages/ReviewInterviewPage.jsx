@@ -43,7 +43,7 @@ export default function ReviewInterviewPage() {
   const isRoleMode = roleRequiredModes.includes(mode);
   const initialRole = isRoleMode ? (location.state?.role || localStorage.getItem('prepnova_role') || '') : '';
   const difficulty = location.state?.difficulty || localStorage.getItem('prepnova_difficulty') || 'intermediate';
-  const questionCount = location.state?.questionCount || Number(localStorage.getItem('prepnova_question_count')) || 6;
+  const questionCount = location.state?.questionCount || localStorage.getItem('prepnova_question_count') || '6';
   const interviewMode = location.state?.interviewMode || localStorage.getItem('prepnova_mode') || 'Text';
   const selectedSkills = location.state?.selectedSkills || JSON.parse(localStorage.getItem('prepnova_skills') || '[]');
 
@@ -111,7 +111,8 @@ export default function ReviewInterviewPage() {
           mode: mode || undefined,
           resumeId: resumeId || null,
           jdId: jdId || null,
-          maxQuestions: questionCount,
+          questionCountMode: String(questionCount),
+          maxQuestions: String(questionCount).toLowerCase() === 'dynamic' ? null : Number(questionCount),
           focusAreas: selectedSkills
         })
       });
@@ -126,6 +127,7 @@ export default function ReviewInterviewPage() {
             role: data.matchedRole || roleToUse,
             difficulty,
             questionCount,
+            questionCountMode: String(questionCount),
             interviewMode,
             sessionId: data.sessionId,
             firstQuestion: data.question,
@@ -225,7 +227,7 @@ export default function ReviewInterviewPage() {
               Ready to Launch Your Mock Interview
             </h2>
             <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
-              Verify your session parameters and AI fit assessment below. Once started, you will be presented with {questionCount} adaptive questions.
+              Verify your session parameters and AI fit assessment below. Once started, you will be presented with {String(questionCount).toLowerCase() === 'dynamic' ? 'dynamically calibrated' : `${questionCount} per-section`} adaptive questions.
             </p>
           </div>
 
@@ -269,7 +271,9 @@ export default function ReviewInterviewPage() {
 
             <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800">
               <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Session Volume</span>
-              <span className="text-sm font-bold text-slate-900 dark:text-slate-100 mt-1 block">{questionCount} Questions</span>
+              <span className="text-sm font-bold text-slate-900 dark:text-slate-100 mt-1 block">
+                {String(questionCount).toLowerCase() === 'dynamic' ? 'Dynamic / Section' : `${questionCount} Questions / Section`}
+              </span>
             </div>
 
             {resumeId && (

@@ -24,7 +24,7 @@ export default function InterviewPage() {
   const { sessionId: paramSessionId } = useParams();
   const { user } = useAuth();
 
-  const { role, difficulty, totalQuestions, firstQuestion, resumeId, jdId } = useInterviewConfig();
+  const { role, difficulty, totalQuestions, questionCountMode, firstQuestion, resumeId, jdId } = useInterviewConfig();
   const secondsElapsed = useInterviewTimer();
 
   const [textAnswer, setTextAnswer] = useState('');
@@ -33,23 +33,9 @@ export default function InterviewPage() {
 
   const { isRecording, toggleRecording } = useSpeechRecognition(setTextAnswer);
 
-  const finishInterview = (data, { sessionId, currentQuestionIdx }) => {
-    navigate(`/results/${sessionId}`, {
-      state: {
-        sessionId,
-        role,
-        difficulty,
-        finalScore: data?.finalScore ?? null,
-        categoryScores: data?.categoryScores ?? null,
-        duration: formatTimer(secondsElapsed),
-        questionsAnswered: currentQuestionIdx,
-        totalQuestions,
-      },
-    });
-  };
-
   const {
     currentQuestionIdx,
+    totalQuestions: sessionTotalQuestions,
     questionText,
     lastEvaluation,
     loading,
@@ -61,13 +47,31 @@ export default function InterviewPage() {
     role,
     difficulty,
     totalQuestions,
+    questionCountMode,
     initialSessionId: paramSessionId,
     initialQuestion: firstQuestion,
     resumeId,
     jdId,
     userName: user?.name,
-    onComplete: finishInterview,
+    onComplete: (data, snapshot) => finishInterview(data, { ...snapshot, effectiveTotal: sessionTotalQuestions }),
   });
+
+  const effectiveTotal = sessionTotalQuestions || totalQuestions;
+
+  const finishInterview = (data, { sessionId, currentQuestionIdx, effectiveTotal: effTotal }) => {
+    navigate(`/results/${sessionId}`, {
+      state: {
+        sessionId,
+        role,
+        difficulty,
+        finalScore: data?.finalScore ?? null,
+        categoryScores: data?.categoryScores ?? null,
+        duration: formatTimer(secondsElapsed),
+        questionsAnswered: currentQuestionIdx,
+        totalQuestions: effTotal || effectiveTotal,
+      },
+    });
+  };
 
   React.useEffect(() => setActionError(sessionActionError), [sessionActionError]);
 
@@ -92,13 +96,13 @@ export default function InterviewPage() {
         onEndClick={() => setShowEndModal(true)}
       />
 
-      <LiveProgressRibbon current={currentQuestionIdx} total={totalQuestions} />
+      <LiveProgressRibbon current={currentQuestionIdx} total={effectiveTotal} />
 
       <main className="flex-1 max-w-4xl w-full mx-auto p-4 sm:p-8 flex flex-col justify-between space-y-6">
         <div className="space-y-4">
           <QuestionPanel
             current={currentQuestionIdx}
-            total={totalQuestions}
+            total={effectiveTotal}
             difficulty={difficulty}
             questionText={questionText}
             loading={loading}

@@ -25,6 +25,7 @@ export default function useInterviewSession({
   role,
   difficulty,
   totalQuestions,
+  questionCountMode,
   initialSessionId,
   initialQuestion,
   resumeId,
@@ -36,6 +37,9 @@ export default function useInterviewSession({
     initialSessionId || localStorage.getItem(STORAGE_KEYS.SESSION_ID) || ''
   );
   const [currentQuestionIdx, setCurrentQuestionIdx] = useState(1);
+  const [sessionTotalQuestions, setSessionTotalQuestions] = useState(
+    typeof totalQuestions === 'number' ? totalQuestions : 6
+  );
   const [questionText, setQuestionText] = useState(initialQuestion || INITIAL_QUESTION_TEXT);
   const [lastEvaluation, setLastEvaluation] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -61,7 +65,8 @@ export default function useInterviewSession({
           level: difficulty.toLowerCase(),
           resumeId,
           jdId,
-          maxQuestions: totalQuestions,
+          maxQuestions: typeof totalQuestions === 'number' ? totalQuestions : 6,
+          questionCountMode: questionCountMode || String(totalQuestions || '6'),
         });
         if (!isMounted) return;
 
@@ -71,6 +76,7 @@ export default function useInterviewSession({
         }
         if (data.question) setQuestionText(data.question);
         if (data.progress?.current) setCurrentQuestionIdx(data.progress.current);
+        if (data.progress?.total) setSessionTotalQuestions(data.progress.total);
       } catch (_) {
         if (isMounted) setQuestionText(buildFallbackQuestion(role));
       } finally {
@@ -80,7 +86,7 @@ export default function useInterviewSession({
 
     initSession();
     return () => { isMounted = false; };
-  }, [role, difficulty, initialSessionId, initialQuestion, resumeId, jdId, totalQuestions, userName]);
+  }, [role, difficulty, initialSessionId, initialQuestion, resumeId, jdId, totalQuestions, questionCountMode, userName]);
 
   /** Runs a skip/answer request and applies the server's next-turn payload. */
   const runTurn = async (request) => {
@@ -130,6 +136,7 @@ export default function useInterviewSession({
   return {
     sessionId,
     currentQuestionIdx,
+    totalQuestions: sessionTotalQuestions,
     questionText,
     lastEvaluation,
     loading,
