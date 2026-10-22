@@ -25,6 +25,53 @@ function normalizeQuestionCountMode(modeInput) {
   return "6";
 }
 
+const JS_FILLER_PATTERNS = [
+  /^(?:(?:okay|ok|great|awesome|understood|perfect|got it|alright)[,\.!\s]+)?(?:thank\s+you|thanks|i\s+appreciate)(?:\s+(?:very\s+much|so\s+much))?(?:\s+(?:for\s+(?:sharing\s+(?:that|your\s+thoughts?|your\s+experience|your\s+answer)|your\s+(?:answer|explanation|response|time)|the\s+(?:explanation|response|walkthrough)|walking\s+me\s+through\s+that|that)))?[,\.!\s-]*/i,
+  /^(?:(?:okay|ok|great|awesome|understood|perfect|got it|alright)[,\.!\s]+)?(?:that['’]?s\s+(?:great|interesting|helpful|insightful|good)|that\s+makes\s+sense|that\s+was\s+helpful|sounds\s+good)[,\.!\s-]*/i,
+  /^(?:okay|ok|great|awesome|understood|perfect|got it|alright)[,\.!\s]+/i,
+  /^(?:based\s+on\s+(?:what\s+you\s+(?:just\s+)?(?:said|shared|described)|your\s+(?:response|answer|explanation))|as\s+you\s+mentioned(?:\s+earlier)?|following\s+up\s+on\s+that|building\s+on\s+(?:that|what\s+you\s+said))[,\.!\s-]*/i,
+  /^(?:moving\s+(?:on|forward)(?:\s+to\s+the\s+next\s+section|\s+now)?|let['’]?s\s+(?:move\s+on|continue|transition))[,\.!\s-]*/i,
+  /^for\s+(?:sharing\s+(?:that|your\s+thoughts?|your\s+experience|your\s+answer)|your\s+answer|that)[,\.!\s-]*/i
+];
+
+function cleanConversationalFiller(text) {
+  let cleaned = String(text || "").trim();
+  let changed = true;
+  let iterations = 0;
+  while (changed && iterations < 10) {
+    iterations++;
+    changed = false;
+    for (const pat of JS_FILLER_PATTERNS) {
+      const next = cleaned.replace(pat, "").trim();
+      if (next !== cleaned) {
+        cleaned = next;
+        changed = true;
+      }
+    }
+  }
+  if (cleaned.length > 0 && cleaned[0] === cleaned[0].toLowerCase()) {
+    cleaned = cleaned[0].toUpperCase() + cleaned.slice(1);
+  }
+  return cleaned;
+}
+
+function getTokens(t) {
+  const words = String(t || "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((w) => w.length > 2);
+  return new Set(words.map((w) => (w.endsWith("s") && w.length > 3 ? w.slice(0, -1) : w)));
+}
+
+function isSemanticDuplicate(textA, textB, threshold = 0.75) {
+  const tokensA = getTokens(textA);
+  const tokensB = getTokens(textB);
+  if (tokensA.size === 0 || tokensB.size === 0) return false;
+  let intersection = 0;
+  for (const t of tokensA) {
+    if (tokensB.has(t)) intersection++;
+  }
+  const union = new Set([...tokensA, ...tokensB]).size;
+  return union > 0 && (intersection / union) >= threshold;
+}
+
 /**
  * Validates section batch structure before persistence or serving.
  * Throws or returns validation report.
@@ -43,7 +90,7 @@ function validateSectionBatch(batch) {
   }
 
   const seenIds = new Set();
-  const seenTexts = new Set();
+  const seenTexts = [];
 
   for (let i = 0; i < batch.questions.length; i++) {
     const q = batch.questions[i];
@@ -62,12 +109,13 @@ function validateSectionBatch(batch) {
     }
     seenIds.add(qId);
 
-    // Basic duplicate text check
-    const normalizedText = questionText.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-    if (seenTexts.has(normalizedText)) {
-      return { valid: false, error: `Duplicate question text detected at index ${i}.` };
+    // Semantic duplicate text check
+    for (const prev of seenTexts) {
+      if (isSemanticDuplicate(questionText, prev, 0.75)) {
+        return { valid: false, error: `Duplicate or semantically identical question text detected at index ${i}.` };
+      }
     }
-    seenTexts.add(normalizedText);
+    seenTexts.push(questionText);
 
     if (q.sectionId && q.sectionId !== batch.sectionId) {
       return { valid: false, error: `Question sectionId (${q.sectionId}) does not match batch sectionId (${batch.sectionId}).` };
@@ -107,5 +155,7 @@ module.exports = {
   normalizeQuestionCountMode,
   validateSectionBatch,
   validateFollowUp,
-  validateRuntimeFollowUp: validateFollowUp
+  validateRuntimeFollowUp: validateFollowUp,
+  cleanConversationalFiller,
+  isSemanticDuplicate
 };
