@@ -40,6 +40,7 @@ export default function useInterviewSession({
   const [sessionTotalQuestions, setSessionTotalQuestions] = useState(
     typeof totalQuestions === 'number' ? totalQuestions : 6
   );
+  const [currentSection, setCurrentSection] = useState('');
   const [questionText, setQuestionText] = useState(initialQuestion || INITIAL_QUESTION_TEXT);
   const [lastEvaluation, setLastEvaluation] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -92,6 +93,7 @@ export default function useInterviewSession({
           localStorage.setItem(STORAGE_KEYS.SESSION_ID, data.sessionId);
         }
         if (data.question) setQuestionText(data.question);
+        if (data.section) setCurrentSection(data.section);
         if (data.progress?.current) setCurrentQuestionIdx(data.progress.current);
         if (data.progress?.total) setSessionTotalQuestions(data.progress.total);
       } catch (_) {
@@ -118,8 +120,11 @@ export default function useInterviewSession({
         return true;
       }
       if (data.question) setQuestionText(data.question);
+      if (data.section) setCurrentSection(data.section);
       if (data.evaluation) setLastEvaluation(data.evaluation);
       if (data.progress?.current) setCurrentQuestionIdx(data.progress.current);
+      // Sync total in case follow-ups were added this turn
+      if (data.progress?.total) setSessionTotalQuestions(data.progress.total);
       return true;
     } catch (err) {
       try {
@@ -155,6 +160,7 @@ export default function useInterviewSession({
     sessionId,
     currentQuestionIdx,
     totalQuestions: sessionTotalQuestions,
+    currentSection,
     questionText,
     lastEvaluation,
     loading,

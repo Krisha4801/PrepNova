@@ -36,6 +36,7 @@ export default function InterviewPage() {
   const {
     currentQuestionIdx,
     totalQuestions: sessionTotalQuestions,
+    currentSection,
     questionText,
     lastEvaluation,
     loading,
@@ -103,6 +104,7 @@ export default function InterviewPage() {
           <QuestionPanel
             current={currentQuestionIdx}
             total={effectiveTotal}
+            section={currentSection}
             difficulty={difficulty}
             questionText={questionText}
             loading={loading}

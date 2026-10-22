@@ -424,14 +424,20 @@ async function finalizeSessionEvaluation(session, res) {
     session.reportStatus = "running";
     await session.save();
 
-    const transcriptItems = session.questions.map((q, idx) => ({
-      question_index: idx,
-      section_id: q.sectionId || (idx === 0 ? "introduction" : "technical"),
-      question: q.question,
-      answer: session.answers[idx]?.answer || "",
-      is_skipped: !!session.answers[idx]?.isSkipped,
-      difficulty: q.difficulty || session.difficulty
-    }));
+    const transcriptItems = session.questions.map((q, idx) => {
+      // Match by questionIndex field to survive follow-up insertions that shift array indices
+      const answerRecord = session.answers.find((a) => a.questionIndex === idx)
+        || session.answers[idx]
+        || null;
+      return {
+        question_index: idx,
+        section_id: q.sectionId || (idx === 0 ? "introduction" : "technical"),
+        question: q.question,
+        answer: answerRecord?.answer || "",
+        is_skipped: !!answerRecord?.isSkipped,
+        difficulty: q.difficulty || session.difficulty
+      };
+    });
 
     let batchResult = null;
     try {
