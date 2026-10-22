@@ -21,6 +21,7 @@ export const API_ENDPOINTS = {
   INTERVIEW_START: `${API_BASE_URL}/api/interview/start`,
   INTERVIEW_FOLLOWUP: `${API_BASE_URL}/api/interview/followup`,
   INTERVIEW_SKIP: `${API_BASE_URL}/api/interview/skip`,
+  INTERVIEW_ACTIVE: (sessionId) => `${API_BASE_URL}/api/interview/${encodeURIComponent(sessionId)}/active`,
   INTERVIEW_HISTORY: `${API_BASE_URL}/api/interview/history`,
   INTERVIEW_ANALYTICS: `${API_BASE_URL}/api/interview/analytics`,
   INTERVIEW_REPORT: (sessionId) => `${API_BASE_URL}/api/interview/${encodeURIComponent(sessionId)}/report`,

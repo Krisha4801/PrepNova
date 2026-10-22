@@ -59,15 +59,32 @@ export default function useInterviewSession({
     const initSession = async () => {
       setLoading(true);
       try {
-        const data = await interviewApi.startInterview({
-          name: userName || 'Candidate',
-          role,
-          level: difficulty.toLowerCase(),
-          resumeId,
-          jdId,
-          maxQuestions: typeof totalQuestions === 'number' ? totalQuestions : 6,
-          questionCountMode: questionCountMode || String(totalQuestions || '6'),
-        });
+        let data = null;
+
+        // Session recovery on browser reload or revisit
+        if (initialSessionId && !initialQuestion) {
+          try {
+            data = await interviewApi.getActiveSession(initialSessionId);
+            if (data?.completed) {
+              if (isMounted) onComplete(data, { sessionId: initialSessionId, currentQuestionIdx });
+              return;
+            }
+          } catch (err) {
+            console.warn('Active session recovery failed, falling back to start:', err.message);
+          }
+        }
+
+        if (!data) {
+          data = await interviewApi.startInterview({
+            name: userName || 'Candidate',
+            role,
+            level: difficulty.toLowerCase(),
+            resumeId,
+            jdId,
+            maxQuestions: typeof totalQuestions === 'number' ? totalQuestions : 6,
+            questionCountMode: questionCountMode || String(totalQuestions || '6'),
+          });
+        }
         if (!isMounted) return;
 
         if (data.sessionId) {
@@ -90,6 +107,7 @@ export default function useInterviewSession({
 
   /** Runs a skip/answer request and applies the server's next-turn payload. */
   const runTurn = async (request) => {
+    if (loading) return false;
     setLoading(true);
     setActionError('');
     try {

@@ -45,6 +45,10 @@ export const submitAnswer = (sessionId, answer) =>
 export const endSession = (sessionId) =>
   request(API_ENDPOINTS.INTERVIEW_END(sessionId), { method: 'DELETE' });
 
+/** Fetches the active in-progress session question and progress for reload recovery. */
+export const getActiveSession = (sessionId) =>
+  request(API_ENDPOINTS.INTERVIEW_ACTIVE(sessionId), { method: 'GET' });
+
 /** Fetches the saved report if a turn request failed after session completion. */
 export const getInterviewReport = (sessionId) =>
   request(API_ENDPOINTS.INTERVIEW_REPORT(sessionId), { method: 'GET' });
