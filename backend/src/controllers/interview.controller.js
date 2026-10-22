@@ -998,27 +998,30 @@ exports.skipQuestion = async (req, res, next) => {
     const currentIndex = session.answers.length;
     const currentQuestion = session.questions[currentIndex] || session.questions[session.questions.length - 1];
 
-    session.answers.push({
-      questionIndex: currentIndex,
-      turnId: currentQuestion.questionId || `turn_${currentIndex}`,
-      sectionId: currentQuestion.sectionId || "introduction",
-      answer: "[Skipped by candidate]",
-      isSkipped: true,
-      audioUsed: false,
-      evaluationStatus: "skipped",
-      submittedAt: new Date()
-    });
+    const existingAnswer = session.answers.find((a) => a.questionIndex === currentIndex);
+    if (!existingAnswer) {
+      session.answers.push({
+        questionIndex: currentIndex,
+        turnId: currentQuestion.questionId || `turn_${currentIndex}`,
+        sectionId: currentQuestion.sectionId || "introduction",
+        answer: "[Skipped by candidate]",
+        isSkipped: true,
+        audioUsed: false,
+        evaluationStatus: "skipped",
+        submittedAt: new Date()
+      });
 
-    const activeBatch = (session.sectionBatches || []).find((b) => b.sectionId === currentQuestion.sectionId);
-    if (activeBatch && Array.isArray(activeBatch.questions)) {
-      const bq = activeBatch.questions.find((q) => q.questionId === currentQuestion.questionId);
-      if (bq) {
-        bq.status = "skipped";
-        session.markModified("sectionBatches");
+      const activeBatch = (session.sectionBatches || []).find((b) => b.sectionId === currentQuestion.sectionId);
+      if (activeBatch && Array.isArray(activeBatch.questions)) {
+        const bq = activeBatch.questions.find((q) => q.questionId === currentQuestion.questionId);
+        if (bq) {
+          bq.status = "skipped";
+          session.markModified("sectionBatches");
+        }
       }
-    }
 
-    await session.save();
+      await session.save();
+    }
 
     if (session.answers.length >= session.totalQuestions) {
       return await finalizeSessionEvaluation(session, res);
@@ -1498,6 +1501,71 @@ exports.validateInputs = async (req, res, next) => {
     return res.json({
       success: true,
       ...validationResult
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * GET ACTIVE SESSION FOR RELOAD RECOVERY
+ * GET /api/interview/:sessionId/active
+ */
+exports.getActiveSession = async (req, res, next) => {
+  try {
+    const { sessionId } = req.params;
+    const userId = req.user ? String(req.user._id || req.user.id) : null;
+
+    if (!sessionId) {
+      return res.status(400).json({ error: "Session ID is required." });
+    }
+
+    const session = await InterviewSession.findOne({ sessionId });
+    if (!session) {
+      return res.status(404).json({ error: "Interview session not found." });
+    }
+
+    if (String(session.userId) !== userId) {
+      return res.status(403).json({ error: "Access denied. You do not own this session." });
+    }
+
+    if (session.status === "completed") {
+      return res.json({
+        sessionId: session.sessionId,
+        completed: true,
+        finalReport: session.finalReport,
+        finalScore: session.finalReport?.finalScore
+      });
+    }
+
+    const currentIdx = session.answers.length;
+    let activeQuestion = session.questions[currentIdx] || session.questions[session.questions.length - 1];
+
+    if (currentIdx >= session.questions.length && session.answers.length < session.totalQuestions) {
+      activeQuestion = await advanceToNextPrimaryQuestion(session);
+    }
+
+    if (!activeQuestion || session.answers.length >= session.totalQuestions) {
+      return await finalizeSessionEvaluation(session, res);
+    }
+
+    return res.json({
+      sessionId: session.sessionId,
+      completed: false,
+      question: activeQuestion.question,
+      nextQuestion: activeQuestion.question,
+      section: activeQuestion.sectionId,
+      questionType: activeQuestion.questionType,
+      category: activeQuestion.category,
+      format: activeQuestion.format,
+      level: activeQuestion.difficulty || session.difficulty,
+      role: session.role,
+      questionCountMode: session.questionCountMode,
+      plannedSectionCounts: session.plannedSectionCounts,
+      progress: {
+        current: session.answers.length + 1,
+        total: session.totalQuestions
+      }
     });
   } catch (err) {
     next(err);
