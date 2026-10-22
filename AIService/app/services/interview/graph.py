@@ -3,6 +3,7 @@ import logging
 import re
 import math
 import numpy as np
+import uuid
 from typing import Dict, Any, List, Optional, Tuple
 from pydantic import BaseModel, Field
 
@@ -24,7 +25,13 @@ from app.schemas.interview import (
     PlanBlueprintRequest,
     NextTurnRequest,
     NextTurnResponse,
-    IntroductionEvaluation
+    IntroductionEvaluation,
+    SectionBatchRequest,
+    SectionBatchResponse,
+    SectionBatchQuestion,
+    RuntimeFollowUp,
+    FollowUpDecisionRequest,
+    FollowUpDecisionResponse
 )
 from app.services.llm.client import LLMClient
 from app.services.vectorstore.chroma_store import ChromaStore
@@ -1586,6 +1593,505 @@ def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprin
             "evaluateOnlyAfterCompletion": True
         },
         context_availability=context_availability
+    )
+
+
+# =========================================================
+# SECTION-WISE BATCH QUESTION ENGINE
+# =========================================================
+
+FILLER_PATTERNS = [
+    # "Okay, thank you for sharing that." / "Thank you for sharing that." / "Thanks for your answer."
+    r"^(?:(?:okay|ok|great|awesome|understood|perfect|got it)[,\.!\s]+)?(?:thank\s+you|thanks)(?:\s+(?:for\s+(?:sharing\s+(?:that|your\s+thoughts?|your\s+experience|your\s+answer)|your\s+answer|that)))?[,\.!\s-]*",
+    # "Okay, that's interesting." / "Great, that's interesting!"
+    r"^(?:okay|ok|great|awesome|understood|perfect|got it)(?:[,\.!\s]+that['’]?s\s+interesting|[,\.!\s]+that\s+makes\s+sense|[,\.!\s]+that\s+was\s+helpful)?[,\.!\s-]*",
+    # "Understood, that makes sense."
+    r"^(?:understood|perfect|got it|great)[,\.!\s]+(?:that\s+makes\s+sense|that\s+was\s+helpful)?[,\.!\s-]*",
+    # "Based on what you just said," / "As you mentioned earlier,"
+    r"^(?:based\s+on\s+what\s+you\s+(?:just\s+)?said|as\s+you\s+mentioned(?:\s+earlier)?|following\s+up\s+on\s+that|building\s+on\s+that)[,\.!\s-]*",
+    # Trailing "for sharing that." / "for that."
+    r"^for\s+(?:sharing\s+(?:that|your\s+thoughts?|your\s+experience|your\s+answer)|your\s+answer|that)[,\.!\s-]*",
+]
+
+def clean_conversational_filler(text: str) -> str:
+    """Removes conversational filler and repetitive acknowledgments from question text."""
+    cleaned = (text or "").strip()
+    changed = True
+    while changed:
+        changed = False
+        for pattern in FILLER_PATTERNS:
+            new_cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE).strip()
+            if new_cleaned != cleaned:
+                cleaned = new_cleaned
+                changed = True
+    if cleaned and cleaned[0].islower():
+        cleaned = cleaned[0].upper() + cleaned[1:]
+    return cleaned
+
+
+def get_section_fallback_questions(
+    section_id: str,
+    role: str,
+    difficulty: str,
+    count: int
+) -> List[Dict[str, Any]]:
+    """
+    Returns deterministic, calibrated fallback primary questions for a given section.
+    Ensures that batch generation never crashes if LLM is unavailable or times out.
+    """
+    r_topics = get_role_default_topics(role)
+    primary_topic = r_topics[0] if r_topics else role
+    secondary_topic = r_topics[1] if len(r_topics) > 1 else primary_topic
+
+    templates: Dict[str, List[Dict[str, str]]] = {
+        "projects": [
+            {
+                "objective": "Assess technical architecture and personal ownership on candidate's project",
+                "text": f"Can you walk me through the architecture and your specific personal contributions to a significant project you built as a {role}?"
+            },
+            {
+                "objective": "Assess debugging challenges, trade-offs, and failure recovery",
+                "text": f"In that project, what was the most difficult technical trade-off or unexpected bug you encountered, and how did you resolve it?"
+            },
+            {
+                "objective": "Assess modularity, component boundaries, and testing strategy",
+                "text": "How did you design the component boundaries and data contracts in that project to ensure maintainability and testability?"
+            },
+            {
+                "objective": "Assess performance optimization and measurable impact",
+                "text": "What concrete metrics or benchmarks demonstrated the performance and real-world impact of your project?"
+            },
+            {
+                "objective": "Assess security and data protection under production conditions",
+                "text": "How did you handle input validation, authentication, and error boundaries in that project?"
+            },
+            {
+                "objective": "Assess technical reflection and architectural iteration",
+                "text": "If you had the opportunity to rebuild that project from scratch today, what architectural decisions would you change?"
+            },
+            {
+                "objective": "Assess third-party dependency selection and integration trade-offs",
+                "text": "What criteria did you use to evaluate and select third-party libraries or infrastructure components for that system?"
+            },
+            {
+                "objective": "Assess observability, logging, and monitoring implementation",
+                "text": "What logging, alerting, and monitoring mechanisms did you build into that application to track production health?"
+            },
+            {
+                "objective": "Assess state management and concurrency handling under load",
+                "text": "How did your project manage state synchronization and race conditions when multiple operations executed concurrently?"
+            },
+            {
+                "objective": "Assess deployment automation and CI/CD pipelines",
+                "text": "Walk me through how your project was packaged, tested, and deployed to production."
+            }
+        ],
+        "experience": [
+            {
+                "objective": "Assess team collaboration and cross-functional engineering delivery",
+                "text": f"In your engineering or internship experience, how have you collaborated with product managers and other engineers to deliver complex features under deadlines?"
+            },
+            {
+                "objective": "Assess code review practices and incorporating technical feedback",
+                "text": "Describe a situation where a code review raised significant architectural disagreements. How did you work through the feedback constructively?"
+            },
+            {
+                "objective": "Assess agile execution, sprint estimation, and resolving blockers",
+                "text": "How do you break down ambiguous requirements into actionable engineering tasks and estimate timelines realistically?"
+            },
+            {
+                "objective": "Assess onboarding and contributing to unfamiliar codebases",
+                "text": "When stepping into a large, unfamiliar codebase or legacy system, what systematic process do you use to ramp up and start contributing safely?"
+            },
+            {
+                "objective": "Assess mentorship and elevating team engineering standards",
+                "text": "How do you share technical knowledge, mentor peers, or improve engineering practices across your team?"
+            },
+            {
+                "objective": "Assess handling production outages and on-call escalation",
+                "text": "Describe your experience participating in an incident response or debugging a live production issue affecting end users."
+            },
+            {
+                "objective": "Assess technical debt management alongside feature delivery",
+                "text": "How do you advocate for and schedule technical debt refactoring alongside aggressive product roadmap commitments?"
+            },
+            {
+                "objective": "Assess cross-team communication and API contract negotiation",
+                "text": "Tell me about a time you collaborated with an external team or upstream service to define shared data contracts."
+            },
+            {
+                "objective": "Assess adaptability when project priorities pivot unexpectedly",
+                "text": "How do you handle sudden shifts in project scope or business priorities midway through an engineering sprint?"
+            },
+            {
+                "objective": "Assess retrospective learning and continuous process improvement",
+                "text": "What is an engineering process change or automation you proposed that measurably improved your team's velocity?"
+            }
+        ],
+        "skills": [
+            {
+                "objective": f"Assess hands-on proficiency with {primary_topic}",
+                "text": f"In your experience with {primary_topic}, how do you structure components and modules for maximum reusability and clean separation of concerns?"
+            },
+            {
+                "objective": f"Assess performance diagnosis and optimization with {primary_topic}",
+                "text": f"What profiling tools and techniques do you rely on to identify and fix performance bottlenecks when developing with {primary_topic}?"
+            },
+            {
+                "objective": f"Assess asynchronous handling and data fetching with {secondary_topic}",
+                "text": f"How do you coordinate asynchronous data fetching, error retries, and caching when working with {secondary_topic}?"
+            },
+            {
+                "objective": f"Assess error boundaries and defensive programming",
+                "text": f"What defensive coding patterns do you employ with {primary_topic} to prevent unhandled exceptions from degrading the entire application?"
+            },
+            {
+                "objective": f"Assess testing strategies across unit, integration, and end-to-end boundaries",
+                "text": f"What testing strategy do you use for features built with {primary_topic} to balance test coverage with development speed?"
+            },
+            {
+                "objective": f"Assess security hardening and input sanitization",
+                "text": f"What security risks are most common in applications using {primary_topic}, and how do you protect against them?"
+            },
+            {
+                "objective": f"Assess configuration management and environment isolation",
+                "text": f"How do you manage environment-specific configurations and secret values securely when working with {primary_topic}?"
+            },
+            {
+                "objective": f"Assess architectural trade-offs between competing frameworks or tools",
+                "text": f"When evaluating {primary_topic} against modern alternatives, what trade-offs guide your decision on whether to adopt it?"
+            },
+            {
+                "objective": f"Assess real-time communication and event-driven patterns",
+                "text": f"How do you implement event-driven updates or real-time communication patterns within {secondary_topic}?"
+            },
+            {
+                "objective": f"Assess state persistence and data caching mechanisms",
+                "text": f"How do you manage client-side or server-side cache invalidation strategies using {primary_topic}?"
+            }
+        ],
+        "technical_concepts": [
+            {
+                "objective": f"Assess runtime internals and memory model for {role}",
+                "text": f"How does the underlying runtime or execution environment handle memory allocation, garbage collection, and variable lifecycles in {primary_topic}?"
+            },
+            {
+                "objective": f"Assess concurrency, event loop, and thread synchronization",
+                "text": f"Explain how concurrency or the async event loop functions under the hood in {primary_topic}, and how you prevent race conditions."
+            },
+            {
+                "objective": "Assess computational complexity and data structure selection",
+                "text": "When choosing between hashtables, trees, and indexed arrays for high-frequency lookup operations, what time/space trade-offs do you evaluate?"
+            },
+            {
+                "objective": "Assess network protocols, HTTP semantics, and socket lifecycles",
+                "text": "How do HTTP/2 multiplexing, keep-alive connections, and connection pooling optimize network throughput compared to HTTP/1.1?"
+            },
+            {
+                "objective": "Assess database isolation levels and transaction consistency",
+                "text": "Explain the differences between Read Committed, Repeatable Read, and Serializable isolation levels, and what anomalies each prevents."
+            },
+            {
+                "objective": "Assess algorithm design and caching eviction policies",
+                "text": "How would you design an in-memory LRU cache from first principles, and what data structures provide O(1) get and put operations?"
+            },
+            {
+                "objective": "Assess serialization formats and encoding overhead",
+                "text": "What are the performance and schema-evolution differences between JSON, Protocol Buffers, and Avro for inter-service communication?"
+            },
+            {
+                "objective": "Assess indexing algorithms (B-Tree vs LSM-Tree vs Hash)",
+                "text": "Compare how B-Tree indexes and Log-Structured Merge (LSM) Trees organize writes and reads on disk, and where each excels."
+            },
+            {
+                "objective": "Assess distributed consensus and leader election fundamentals",
+                "text": "What core problems do consensus algorithms like Raft solve in distributed systems, and why is a quorum required for leader election?"
+            },
+            {
+                "objective": "Assess cryptographic hashing and authentication tokens",
+                "text": "How does digital signature verification work in asymmetric JWTs, and how do you handle cryptographic key rotation safely?"
+            }
+        ],
+        "scenario": [
+            {
+                "objective": "Assess diagnosing unexpected production latency spikes",
+                "text": f"Imagine your production {role} service experiences a sudden 5x spike in 99th-percentile latency while CPU usage remains low. Walk me through your step-by-step diagnostic workflow."
+            },
+            {
+                "objective": "Assess designing high-throughput API rate limiting under distributed traffic",
+                "text": "How would you design a distributed rate limiter that accurately throttles abusive clients across a cluster of 50 API gateway nodes?"
+            },
+            {
+                "objective": "Assess handling database connection pool exhaustion during traffic surges",
+                "text": "A flash-sale event causes database connection pool exhaustion and cascading request timeouts. What immediate mitigations and architectural defenses would you put in place?"
+            },
+            {
+                "objective": "Assess zero-downtime database schema migration on high-volume tables",
+                "text": "You need to add and backfill a non-nullable indexed column on a production table containing 50 million active records. How do you execute this with zero downtime?"
+            },
+            {
+                "objective": "Assess mitigating cache stampedes and thundering herd problems",
+                "text": "A high-traffic cached homepage key expires simultaneously for thousands of concurrent users, overwhelming downstream database replicas. How do you prevent and resolve this cache stampede?"
+            },
+            {
+                "objective": "Assess designing resilient webhook delivery with exponential backoff and dead-lettering",
+                "text": "How would you architect a reliable webhook dispatching pipeline that guarantees at-least-once delivery, respects downstream rate limits, and isolates failing endpoints?"
+            },
+            {
+                "objective": "Assess graceful service degradation during partial downstream outage",
+                "text": "A critical third-party analytics API goes down, causing client requests to hang. How do you implement circuit breakers and fallback responses to prevent user-facing failures?"
+            },
+            {
+                "objective": "Assess data reconciliation and idempotency in payment/order workflows",
+                "text": "A customer double-clicks a purchase button during high network jitter. How do you guarantee payment idempotency end-to-end between client, server, and payment gateway?"
+            },
+            {
+                "objective": "Assess designing a multi-tenant data isolation strategy",
+                "text": "When architecting a SaaS platform, how do you evaluate tenant isolation models (shared schema vs separate schema vs separate database) in terms of security and operational cost?"
+            },
+            {
+                "objective": "Assess graceful shutdown and draining in-flight requests during rolling updates",
+                "text": "When container instances receive a SIGTERM during rolling deployments, how do you ensure in-flight HTTP requests and background jobs terminate cleanly without dropping data?"
+            }
+        ],
+        "behavioral": [
+            {
+                "objective": "Assess resolving architectural disagreements within the engineering team",
+                "text": "Tell me about a time you strongly disagreed with a senior engineer or architect regarding a technical direction. How did you present your case and navigate the resolution?"
+            },
+            {
+                "objective": "Assess taking ownership of mistakes and driving blameless post-mortems",
+                "text": "Describe a situation where a bug or decision you made led to a production problem. How did you communicate the issue to stakeholders and ensure it wouldn't happen again?"
+            },
+            {
+                "objective": "Assess delivering high-priority commitments under tight time constraints",
+                "text": "Can you share an experience where you had to balance delivering an urgent feature against maintaining high code quality and test coverage?"
+            },
+            {
+                "objective": "Assess mentoring and upskilling a struggling or junior team member",
+                "text": "Tell me about a time you mentored a junior teammate or helped an engineer who was struggling to deliver their sprint tasks."
+            },
+            {
+                "objective": "Assess pushing back against unrealistic product requirements with engineering trade-offs",
+                "text": "How have you handled a situation where product management requested a delivery timeline that was technically unrealistic?"
+            },
+            {
+                "objective": "Assess adapting to ambiguous requirements with iterative prototyping",
+                "text": "Describe a project where requirements were vague or constantly shifting. How did you structure your work to make consistent forward progress?"
+            },
+            {
+                "objective": "Assess cross-functional stakeholder communication with non-technical audiences",
+                "text": "How do you explain complex technical architecture decisions, system outages, or technical debt to non-technical business stakeholders?"
+            },
+            {
+                "objective": "Assess continuous professional self-improvement and learning",
+                "text": "What is a challenging technical topic or skill you learned recently outside your everyday work, and what sparked your interest in it?"
+            },
+            {
+                "objective": "Assess fostering an inclusive, high-trust engineering culture",
+                "text": "How do you contribute to creating an open environment where engineers feel safe proposing creative ideas or pointing out potential design flaws?"
+            },
+            {
+                "objective": "Assess prioritizing customer needs and business impact in engineering decisions",
+                "text": "Give an example of a technical decision you made that was directly influenced by empathy for the end-user experience."
+            }
+        ]
+    }
+
+    sec_templates = templates.get(section_id, templates["technical_concepts"])
+    return sec_templates[:count]
+
+
+def generate_section_batch(request: SectionBatchRequest) -> SectionBatchResponse:
+    """
+    Generates an ordered batch of primary questions for exactly one blueprint section.
+    Enforces section scoping, prompt-level non-repetition, structured schema validation,
+    and deterministic fallback resilience.
+    """
+    session_id = getattr(request, "sessionId", None) or getattr(request, "session_id", "session")
+    section_id = getattr(request, "sectionId", None) or getattr(request, "section_id", "introduction")
+    role = request.role or "Software Engineer"
+    difficulty = request.difficulty or "beginner"
+    planned_count = int(getattr(request, "plannedPrimaryQuestionCount", None) or getattr(request, "planned_primary_question_count", 6))
+    generation_mode = str(getattr(request, "generationMode", None) or getattr(request, "generation_mode", "6"))
+    user_id = getattr(request, "userId", None) or getattr(request, "user_id", None)
+    resume_id = getattr(request, "resumeId", None) or getattr(request, "resume_id", None)
+    jd_id = getattr(request, "jdId", None) or getattr(request, "jd_id", None)
+    section_objective = getattr(request, "sectionObjective", None) or getattr(request, "section_objective", None)
+    already_asked = [q.strip() for q in (getattr(request, "alreadyAskedQuestions", None) or getattr(request, "already_asked_questions", []) or []) if q and q.strip()]
+
+    # Section 1: Introduction is always exactly 1 opening primary question
+    if section_id == "introduction":
+        intro_text = (
+            f"Hello! To get started, could you please introduce yourself and highlight the "
+            f"key experiences, skills, and projects most relevant to this {role} position?"
+        )
+        q = SectionBatchQuestion(
+            question_id=f"q_{session_id}_introduction_1_{uuid.uuid4().hex[:6]}",
+            section_id="introduction",
+            order=1,
+            type="primary",
+            objective="Assess communication structure, conciseness, and alignment with target role",
+            difficulty=difficulty,
+            text=intro_text,
+            context_references=["role"],
+            status="pending"
+        )
+        return SectionBatchResponse(
+            section_id="introduction",
+            generation_mode=generation_mode,
+            planned_primary_question_count=1,
+            questions=[q],
+            generation_version=1
+        )
+
+    # Scoped context retrieval for section_id
+    grounding_chunks: List[str] = []
+    if user_id and (resume_id or jd_id):
+        try:
+            store = ChromaStore()
+            query_map = {
+                "projects": "projects technical stack architecture contributions challenges measurable impact",
+                "experience": "work experience employment team agile engineering delivery mentoring",
+                "skills": f"core technical skills frameworks tools libraries hands-on application {role}",
+                "technical_concepts": f"language mechanics internals memory concurrency algorithms {role}",
+                "scenario": f"incident failure scaling trade-offs latency performance production {role}",
+                "behavioral": "conflict resolution teamwork ownership mistakes communication STAR"
+            }
+            q_str = query_map.get(section_id, f"core competencies for {role}")
+
+            # Query resume if available and relevant
+            if resume_id and section_id in ["projects", "experience", "skills"]:
+                r_res = store.search(query=q_str, user_id=user_id, document_id=resume_id, top_k=3)
+                if r_res and "documents" in r_res and r_res["documents"] and r_res["documents"][0]:
+                    grounding_chunks.extend([f"[Candidate Resume] {d.strip()}" for d in r_res["documents"][0] if d and d.strip()])
+
+            # Query JD if available and relevant
+            if jd_id and section_id in ["skills", "scenario", "technical_concepts"]:
+                j_res = store.search(query=q_str, user_id=user_id, document_id=jd_id, top_k=3)
+                if j_res and "documents" in j_res and j_res["documents"] and j_res["documents"][0]:
+                    grounding_chunks.extend([f"[Job Description] {d.strip()}" for d in j_res["documents"][0] if d and d.strip()])
+        except Exception as e:
+            logger.debug(f"generate_section_batch retrieval fallback: {e}")
+
+    grounding_text = "\n".join(grounding_chunks) if grounding_chunks else f"Standard role requirements and competencies for {role}."
+
+    # LLM generation attempt
+    parsed_questions: List[Dict[str, Any]] = []
+
+    try:
+        llm = LLMClient().get_llm()
+        system_prompt = (
+            f"You are PrepNova's senior technical interviewer. Generate an ordered batch of exactly {planned_count} "
+            f"primary interview questions for the section '{section_id}'.\n"
+            f"Target Role: {role}\n"
+            f"Target Difficulty: {difficulty}\n"
+            f"Section Objective: {section_objective or 'Assess relevant engineering competencies'}\n"
+            f"Target Competencies: {', '.join(request.competencies) if request.competencies else 'Core role skills'}\n\n"
+            "CRITICAL RULES:\n"
+            f"1. SCOPE: Generate questions for section '{section_id}' ONLY. Do NOT generate questions for any other section.\n"
+            "2. ZERO FILLER: Every question must be direct, independent, and professional. NEVER use conversational filler ('Okay', 'Thank you for sharing', 'Great', 'Thanks for your answer', 'Based on what you said').\n"
+            f"3. STRICT NON-REPETITION: Do NOT repeat, rephrase, or overlap with any previously asked questions in this session.\n"
+            "4. ACCURACY: Base questions on provided context and standard role competencies. Do NOT invent candidate employers, metrics, or technologies not mentioned in the context.\n"
+            "5. OUTPUT SCHEMA: Return a valid JSON array of objects only:\n"
+            "[\n"
+            "  {\n"
+            "    \"order\": 1,\n"
+            "    \"objective\": \"specific technical objective\",\n"
+            f"    \"difficulty\": \"{difficulty}\",\n"
+            "    \"text\": \"direct, professional question text\",\n"
+            "    \"context_references\": [\"role\"]\n"
+            "  }\n"
+            "]\n"
+            "Return valid JSON array only with NO markdown fences."
+        )
+
+        user_prompt = (
+            f"Section: {section_id}\n"
+            f"Target Question Count: {planned_count}\n"
+            f"Grounding Evidence:\n{grounding_text}\n\n"
+            f"Previously asked questions to avoid:\n"
+            + ("\n".join(f"- {q}" for q in already_asked[:10]) if already_asked else "None")
+            + "\n\nGenerate the primary question batch now."
+        )
+
+        resp = llm.invoke([
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
+        ])
+        raw_content = resp.content.replace("```json", "").replace("```", "").strip()
+        data = json.loads(raw_content)
+        if isinstance(data, list):
+            parsed_questions = data
+        elif isinstance(data, dict) and "questions" in data and isinstance(data["questions"], list):
+            parsed_questions = data["questions"]
+    except Exception as e:
+        logger.warning(f"generate_section_batch LLM generation failed or unavailable: {e}")
+
+    # Fallback questions for this section if LLM returned fewer than planned
+    fallback_pool = get_section_fallback_questions(
+        section_id=section_id,
+        role=role,
+        difficulty=difficulty,
+        count=max(planned_count, 10)
+    )
+
+    validated_questions: List[SectionBatchQuestion] = []
+    seen_texts = set(q.lower() for q in already_asked)
+
+    for item in parsed_questions:
+        if len(validated_questions) >= planned_count:
+            break
+        raw_text = clean_conversational_filler(str(item.get("text", "")).strip())
+        if not raw_text or len(raw_text) < 15:
+            continue
+        if raw_text.lower() in seen_texts:
+            continue
+
+        seen_texts.add(raw_text.lower())
+        order_idx = len(validated_questions) + 1
+        q_obj = SectionBatchQuestion(
+            question_id=f"q_{session_id}_{section_id}_{order_idx}_{uuid.uuid4().hex[:6]}",
+            section_id=section_id,
+            order=order_idx,
+            type="primary",
+            objective=str(item.get("objective") or section_objective or f"Assess {section_id}"),
+            difficulty=str(item.get("difficulty") or difficulty),
+            text=raw_text,
+            context_references=item.get("context_references") or (["resume"] if resume_id else ["role"]),
+            status="pending"
+        )
+        validated_questions.append(q_obj)
+
+    # Fill any remaining slots up to planned_count using deterministic section fallbacks
+    fb_idx = 0
+    while len(validated_questions) < planned_count and fb_idx < len(fallback_pool):
+        fb_item = fallback_pool[fb_idx]
+        fb_idx += 1
+        fb_text = fb_item["text"]
+        if fb_text.lower() in seen_texts:
+            continue
+        seen_texts.add(fb_text.lower())
+        order_idx = len(validated_questions) + 1
+        q_obj = SectionBatchQuestion(
+            question_id=f"q_{session_id}_{section_id}_{order_idx}_{uuid.uuid4().hex[:6]}",
+            section_id=section_id,
+            order=order_idx,
+            type="primary",
+            objective=fb_item["objective"],
+            difficulty=difficulty,
+            text=fb_text,
+            context_references=["role"],
+            status="pending"
+        )
+        validated_questions.append(q_obj)
+
+    return SectionBatchResponse(
+        section_id=section_id,
+        generation_mode=generation_mode,
+        planned_primary_question_count=len(validated_questions),
+        questions=validated_questions,
+        generation_version=1
     )
 
 

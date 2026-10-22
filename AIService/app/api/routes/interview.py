@@ -9,7 +9,9 @@ from app.schemas.interview import (
     InterviewBlueprint,
     PlanBlueprintRequest,
     NextTurnRequest,
-    NextTurnResponse
+    NextTurnResponse,
+    SectionBatchRequest,
+    SectionBatchResponse
 )
 from app.services.interview.graph import (
     question_workflow,
@@ -17,6 +19,7 @@ from app.services.interview.graph import (
     evaluate_full_session,
     plan_interview_blueprint,
     generate_next_turn,
+    generate_section_batch,
     QuestionState,
     EvaluationState
 )
@@ -154,6 +157,21 @@ async def next_turn_endpoint(request: NextTurnRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Next turn generation error: {str(e)}"
+        )
+
+
+@router.post("/section-batch", response_model=SectionBatchResponse)
+async def generate_section_batch_endpoint(request: SectionBatchRequest):
+    """
+    Generates an ordered batch of primary questions for exactly one section.
+    Enforces section scoping, prompt-level non-repetition, and schema validation.
+    """
+    try:
+        return generate_section_batch(request)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Section batch generation error: {str(e)}"
         )
 
 

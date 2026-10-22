@@ -328,8 +328,29 @@ exports.startInterview = async (req, res, next) => {
     // Turn 0 is always the opening candidate self-introduction in the introduction section
     const introQuestionText = `Hello! To get started, could you please introduce yourself and highlight the key experiences, skills, and projects most relevant to this ${selectedRole} position?`;
 
+    const introQuestionId = `q_${sessionId}_introduction_1`;
+    const introBatch = {
+      sectionId: "introduction",
+      generationMode: questionCountMode,
+      plannedPrimaryQuestionCount: 1,
+      generationVersion: 1,
+      questions: [
+        {
+          questionId: introQuestionId,
+          sectionId: "introduction",
+          order: 1,
+          type: "primary",
+          objective: "Assess communication structure, conciseness, and alignment with target role",
+          difficulty: selectedLevel,
+          text: introQuestionText,
+          contextReferences: ["role"],
+          status: "asked"
+        }
+      ]
+    };
+
     const firstQuestionItem = {
-      questionId: `turn_0_${Date.now()}`,
+      questionId: introQuestionId,
       question: introQuestionText,
       category: "Introduction",
       format: "Open",
@@ -359,7 +380,7 @@ exports.startInterview = async (req, res, next) => {
       currentSectionId: "introduction",
       currentBatchQuestionIndex: 0,
       plannedSectionCounts,
-      sectionBatches: [],
+      sectionBatches: [introBatch],
       totalQuestions,
       questionCount: 1,
       questions: [firstQuestionItem],
@@ -599,9 +620,165 @@ async function finalizeSessionEvaluation(session, res) {
 }
 
 /**
+ * Generates a fallback batch of primary questions for a section when the AI service is unavailable.
+ */
+function generateSectionBatchFallback(session, sectionId, count) {
+  const fallbackQuestions = [];
+  const role = session.role || "Software Engineer";
+  const diff = session.difficulty || "beginner";
+  const excludeIds = (session.questions || []).map((item) => item.questionId).filter(Boolean);
+
+  for (let i = 1; i <= count; i++) {
+    let qText = null;
+    try {
+      const bankResult = findQuestion({
+        role,
+        level: diff,
+        excludeIds: [...excludeIds, ...fallbackQuestions.map((f) => f.questionId)]
+      });
+      if (bankResult && bankResult.found && bankResult.question) {
+        qText = bankResult.question;
+      }
+    } catch (_) {
+      qText = null;
+    }
+
+    if (!qText) {
+      qText = `For a ${role}, how do you evaluate engineering trade-offs and address core challenges in ${sectionId.replace(/_/g, " ")} (question ${i})?`;
+    }
+
+    fallbackQuestions.push({
+      questionId: `q_${session.sessionId}_${sectionId}_${i}_${Date.now()}`,
+      sectionId,
+      order: i,
+      type: "primary",
+      objective: `Assess practical application in ${sectionId}`,
+      difficulty: diff,
+      text: qText,
+      contextReferences: ["role"],
+      status: "pending"
+    });
+  }
+
+  return {
+    sectionId,
+    generationMode: session.questionCountMode || "6",
+    plannedPrimaryQuestionCount: count,
+    generationVersion: 1,
+    questions: fallbackQuestions
+  };
+}
+
+/**
+ * Loads or generates an ordered batch of primary questions for a section.
+ */
+async function getOrGenerateSectionBatch(session, sectionId) {
+  let batch = (session.sectionBatches || []).find((b) => b.sectionId === sectionId);
+  if (batch && Array.isArray(batch.questions) && batch.questions.length > 0) {
+    return batch;
+  }
+
+  const plannedCount = Number(
+    session.plannedSectionCounts?.[sectionId] ||
+      (session.blueprint?.sections?.find((s) => s.id === sectionId)?.planned_primary_question_count) ||
+      (sectionId === "introduction" ? 1 : 6)
+  );
+
+  const secMeta = session.blueprint?.sections?.find((s) => s.id === sectionId);
+  const alreadyAsked = (session.questions || []).map((q) => q.question).filter(Boolean);
+
+  let newBatch = null;
+  try {
+    newBatch = await aiServiceClient.generateSectionBatch({
+      sessionId: session.sessionId,
+      sectionId,
+      generationMode: session.questionCountMode || "6",
+      plannedPrimaryQuestionCount: plannedCount,
+      role: session.role,
+      difficulty: session.difficulty,
+      mode: session.mode,
+      resumeId: session.resumeId,
+      jdId: session.jdId,
+      userId: String(session.userId),
+      sectionObjective: secMeta?.objective,
+      competencies: secMeta?.competencies || [],
+      alreadyAskedQuestions: alreadyAsked
+    });
+  } catch (err) {
+    console.warn(`aiServiceClient.generateSectionBatch fallback for section ${sectionId}:`, err.message);
+    newBatch = generateSectionBatchFallback(session, sectionId, plannedCount);
+  }
+
+  if (!newBatch || !Array.isArray(newBatch.questions) || newBatch.questions.length === 0) {
+    newBatch = generateSectionBatchFallback(session, sectionId, plannedCount);
+  }
+
+  session.sectionBatches.push(newBatch);
+  await session.save();
+  return newBatch;
+}
+
+/**
+ * Server-authoritative next primary question selector from section batches.
+ * Selects the next eligible question in the active section batch, or transitions to the next section.
+ */
+async function advanceToNextPrimaryQuestion(session) {
+  const applicableSections = (session.blueprint?.sections || []).filter((s) => s.applicable !== false);
+  if (!applicableSections.length) return null;
+
+  let currentSecId = session.currentSectionId || "introduction";
+  let batch = await getOrGenerateSectionBatch(session, currentSecId);
+
+  // Find next pending question in current batch
+  let nextPending = batch.questions.find((q) => q.status === "pending");
+
+  // If no pending questions left in current section batch, transition to next applicable section
+  while (!nextPending) {
+    const currIdx = applicableSections.findIndex((s) => s.id === currentSecId);
+    if (currIdx < 0 || currIdx + 1 >= applicableSections.length) {
+      // All sections complete!
+      return null;
+    }
+
+    const nextSec = applicableSections[currIdx + 1];
+    currentSecId = nextSec.id;
+    session.currentSectionId = currentSecId;
+    session.currentBatchQuestionIndex = 0;
+
+    batch = await getOrGenerateSectionBatch(session, currentSecId);
+    nextPending = batch.questions.find((q) => q.status === "pending");
+  }
+
+  // Mark question as asked
+  nextPending.status = "asked";
+  session.currentBatchQuestionIndex = nextPending.order - 1;
+
+  const nextQuestionItem = {
+    questionId: nextPending.questionId || `turn_${session.questions.length + 1}_${Date.now()}`,
+    question: nextPending.text,
+    category: currentSecId,
+    format: "Scenario",
+    difficulty: nextPending.difficulty || session.difficulty,
+    sectionId: currentSecId,
+    questionType: "primary",
+    objective: nextPending.objective || "",
+    expectedEvidence: [],
+    estimatedSeconds: 60,
+    source: "section_batch"
+  };
+
+  session.questions.push(nextQuestionItem);
+  session.questionCount = session.questions.length;
+  await session.save();
+  activeSessionCache.set(session.sessionId, session.toObject());
+
+  return nextQuestionItem;
+}
+
+/**
  * SUBMIT ANSWER & ADVANCE INTERVIEW
  * Strictly persists answer without live scoring (evaluationStatus: "pending")
- * Delivers next question according to blueprint and bounded follow-up policy.
+ * Delivers next question from active section batch.
  * POST /api/interview/followup
  */
 exports.followup = async (req, res, next) => {
@@ -667,63 +844,12 @@ exports.followup = async (req, res, next) => {
       return await finalizeSessionEvaluation(session, res);
     }
 
-    // Generate next turn via Conversational Turn Engine
-    let nextTurn = null;
-    try {
-      const historyItems = session.questions.map((q, idx) => ({
-        questionId: q.questionId,
-        question: q.question,
-        section_id: q.sectionId,
-        question_type: q.questionType,
-        answer: session.answers[idx]?.answer || "",
-        is_skipped: !!session.answers[idx]?.isSkipped
-      }));
+    // Advance to next primary question from section batches
+    const nextQuestionItem = await advanceToNextPrimaryQuestion(session);
 
-      const sectionTurns = session.questions.filter((q) => q.sectionId === currentQuestion.sectionId && q.questionType === "follow_up").length;
-
-      nextTurn = roleBankTurn(session) || await aiServiceClient.generateNextTurn({
-        sessionId,
-        userId,
-        role: session.role,
-        difficulty: session.difficulty,
-        mode: session.mode,
-        resumeId: session.resumeId,
-        jdId: session.jdId,
-        blueprint: session.blueprint,
-        history: historyItems,
-        currentSectionId: currentQuestion.sectionId,
-        followUpsInCurrentSection: sectionTurns,
-        totalTurnsTaken: session.answers.length,
-        maxTurns: session.totalQuestions
-      });
-    } catch (turnErr) {
-      console.warn("generateNextTurn fallback:", turnErr.message);
-    }
-
-    if (!nextTurn || nextTurn.action === "COMPLETE" || nextTurn.is_complete) {
+    if (!nextQuestionItem) {
       return await finalizeSessionEvaluation(session, res);
     }
-
-    const nextQuestionItem = {
-      questionId: `turn_${session.questions.length + 1}_${Date.now()}`,
-      question: nextTurn.interviewer_text,
-      category: nextTurn.section_id || "Technical Concept",
-      format: "Conversational",
-      difficulty: session.difficulty,
-      sectionId: nextTurn.section_id || "technical",
-      questionType: nextTurn.question_type || "primary",
-      parentQuestionId: nextTurn.parent_question_id || null,
-      reasonCode: nextTurn.reason_code || null,
-      expectedEvidence: nextTurn.expected_evidence || [],
-      estimatedSeconds: nextTurn.estimated_seconds || 60,
-      expectedAnswer: nextTurn.expected_evidence?.join(" ") || null,
-      source: nextTurn.source || "conversational_engine"
-    };
-
-    session.questions.push(nextQuestionItem);
-    session.questionCount = session.questions.length;
-    await session.save();
-    activeSessionCache.set(sessionId, session.toObject());
 
     // Never return scores or evaluation during live turns
     return res.json({
@@ -787,57 +913,11 @@ exports.skipQuestion = async (req, res, next) => {
       return await finalizeSessionEvaluation(session, res);
     }
 
-    let nextTurn = null;
-    try {
-      const historyItems = session.questions.map((q, idx) => ({
-        questionId: q.questionId,
-        question: q.question,
-        section_id: q.sectionId,
-        question_type: q.questionType,
-        answer: session.answers[idx]?.answer || "",
-        is_skipped: !!session.answers[idx]?.isSkipped
-      }));
+    const nextQuestionItem = await advanceToNextPrimaryQuestion(session);
 
-      nextTurn = roleBankTurn(session) || await aiServiceClient.generateNextTurn({
-        sessionId,
-        userId,
-        role: session.role,
-        difficulty: session.difficulty,
-        mode: session.mode,
-        resumeId: session.resumeId,
-        jdId: session.jdId,
-        blueprint: session.blueprint,
-        history: historyItems,
-        currentSectionId: currentQuestion.sectionId,
-        followUpsInCurrentSection: 1, // Skip bypasses follow-ups
-        totalTurnsTaken: session.answers.length,
-        maxTurns: session.totalQuestions
-      });
-    } catch (skipErr) {
-      console.warn("generateNextTurn on skip fallback:", skipErr.message);
-    }
-
-    if (!nextTurn || nextTurn.action === "COMPLETE" || nextTurn.is_complete) {
+    if (!nextQuestionItem) {
       return await finalizeSessionEvaluation(session, res);
     }
-
-    const nextQuestionItem = {
-      questionId: `turn_${session.questions.length + 1}_${Date.now()}`,
-      question: nextTurn.interviewer_text,
-      category: nextTurn.section_id || "Technical Concept",
-      format: "Conversational",
-      difficulty: session.difficulty,
-      sectionId: nextTurn.section_id || "technical",
-      questionType: nextTurn.question_type || "primary",
-      parentQuestionId: null,
-      expectedEvidence: nextTurn.expected_evidence || [],
-      expectedAnswer: nextTurn.expected_evidence?.join(" ") || null,
-      source: nextTurn.source || "conversational_engine"
-    };
-
-    session.questions.push(nextQuestionItem);
-    session.questionCount = session.questions.length;
-    await session.save();
 
     return res.json({
       skipped: true,
