@@ -315,7 +315,27 @@ class AiServiceClient {
         competencies: params.competencies || [],
         already_asked_questions: params.alreadyAskedQuestions || []
       });
-      return response.data;
+      const data = response.data;
+      if (data && typeof data === "object") {
+        return {
+          sectionId: data.sectionId || data.section_id || params.sectionId,
+          generationMode: String(data.generationMode || data.generation_mode || params.generationMode || "6"),
+          plannedPrimaryQuestionCount: Number(data.plannedPrimaryQuestionCount || data.planned_primary_question_count || params.plannedPrimaryQuestionCount || 6),
+          generationVersion: Number(data.generationVersion || data.generation_version || 1),
+          questions: (data.questions || []).map((q, idx) => ({
+            questionId: q.questionId || q.question_id || `q_${params.sessionId}_${params.sectionId}_${idx + 1}`,
+            sectionId: q.sectionId || q.section_id || params.sectionId,
+            order: Number(q.order || idx + 1),
+            type: q.type || "primary",
+            objective: q.objective || "",
+            difficulty: q.difficulty || params.difficulty || "beginner",
+            text: q.text || q.question || "",
+            contextReferences: q.contextReferences || q.context_references || [],
+            status: q.status || "pending"
+          }))
+        };
+      }
+      return data;
     } catch (err) {
       throw normalizeAiServiceError(err, "Section batch question generation");
     }
@@ -342,7 +362,23 @@ class AiServiceClient {
         remaining_section_questions: Number(params.remainingSectionQuestions || 0),
         history: params.history || []
       });
-      return response.data;
+      const data = response.data;
+      if (data && typeof data === "object") {
+        const rawFu = data.followUp || data.follow_up;
+        return {
+          action: data.action,
+          followUp: rawFu ? {
+            type: rawFu.type || "follow_up",
+            parentQuestionId: rawFu.parentQuestionId || rawFu.parent_question_id,
+            sectionId: rawFu.sectionId || rawFu.section_id,
+            objective: rawFu.objective || "",
+            text: rawFu.text || "",
+            contextReferences: rawFu.contextReferences || rawFu.context_references || []
+          } : null,
+          reason: data.reason
+        };
+      }
+      return data;
     } catch (err) {
       throw normalizeAiServiceError(err, "Runtime follow-up decision");
     }

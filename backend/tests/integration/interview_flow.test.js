@@ -116,14 +116,44 @@ describe("Interview Lifecycle & History Integration Tests", () => {
         difficulty: params.difficulty || "intermediate",
         target_duration_minutes: 30,
         sections: [
-          { id: "introduction", title: "Introduction", type: "introduction", applicable: true },
-          { id: "projects", title: "Projects", type: "projects", applicable: true },
-          { id: "skills", title: "Skills", type: "skills", applicable: true },
-          { id: "technical_concepts", title: "Technical Fundamentals", type: "technical_concepts", applicable: true },
-          { id: "scenario", title: "Scenario", type: "scenario", applicable: true },
-          { id: "behavioral", title: "Behavioral", type: "behavioral", applicable: true }
+          { id: "introduction", title: "Introduction", type: "introduction", planned_primary_question_count: 1, applicable: true },
+          { id: "projects", title: "Projects", type: "projects", planned_primary_question_count: 2, applicable: true },
+          { id: "technical_concepts", title: "Technical Fundamentals", type: "technical_concepts", planned_primary_question_count: 2, applicable: true }
         ],
         global_rules: { maxFollowUpsPerQuestion: 1, evaluateOnlyAfterCompletion: true }
+      };
+    };
+
+    aiServiceClient.generateSectionBatch = async (params) => {
+      const count = Number(params.plannedPrimaryQuestionCount || 2);
+      const questions = [];
+      for (let i = 1; i <= count; i++) {
+        questions.push({
+          questionId: `q_${params.sessionId}_${params.sectionId}_${i}`,
+          sectionId: params.sectionId,
+          order: i,
+          type: "primary",
+          objective: `Assess ${params.sectionId}`,
+          difficulty: params.difficulty || "intermediate",
+          text: `Question ${i} for section ${params.sectionId} on ${params.role}`,
+          contextReferences: ["role"],
+          status: "pending"
+        });
+      }
+      return {
+        sectionId: params.sectionId,
+        generationMode: String(params.generationMode || "6"),
+        plannedPrimaryQuestionCount: count,
+        questions,
+        generationVersion: 1
+      };
+    };
+
+    aiServiceClient.decideFollowUp = async (params) => {
+      return {
+        action: "NEXT_PRIMARY",
+        followUp: null,
+        reason: "Answer complete"
       };
     };
 
@@ -304,9 +334,9 @@ describe("Interview Lifecycle & History Integration Tests", () => {
   describe("3. Interview Completion, Final Report & Analytics", () => {
     it("3.1 should complete interview when max questions reached", async () => {
       let finalResult = null;
-      // We already answered 1 question and skipped 1 question, so 2 answers exist.
-      // Submit remaining answers to reach 6.
-      for (let i = 3; i <= 6; i++) {
+      const doc = await InterviewSession.findOne({ sessionId: activeSessionId });
+      const targetTotal = doc.totalQuestions;
+      for (let i = doc.answers.length + 1; i <= targetTotal; i++) {
         const res = await request("/api/interview/followup", {
           method: "POST",
           headers: { Authorization: `Bearer ${user1Token}` },

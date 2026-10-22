@@ -23,36 +23,37 @@ const QuestionItemSchema = new mongoose.Schema(
 
 const SectionBatchQuestionSchema = new mongoose.Schema(
   {
-    questionId: { type: String, required: true },
-    sectionId: { type: String, required: true },
+    questionId: { type: String, required: true, alias: "question_id" },
+    sectionId: { type: String, required: true, alias: "section_id" },
     order: { type: Number, default: 1 },
     type: { type: String, enum: ["primary", "follow_up"], default: "primary" },
     objective: { type: String, default: "" },
     difficulty: { type: String, default: "beginner" },
     text: { type: String, required: true },
-    contextReferences: { type: [String], default: [] },
+    contextReferences: { type: [String], default: [], alias: "context_references" },
     status: {
       type: String,
       enum: ["pending", "asked", "answered", "skipped"],
       default: "pending"
     }
   },
-  { _id: false }
+  { _id: false, toJSON: { virtuals: true }, toObject: { virtuals: true } }
 );
 
 const SectionBatchSchema = new mongoose.Schema(
   {
-    sectionId: { type: String, required: true },
+    sectionId: { type: String, required: true, alias: "section_id" },
     generationMode: {
       type: String,
       enum: ["3", "6", "10", "dynamic"],
-      default: "6"
+      default: "6",
+      alias: "generation_mode"
     },
-    plannedPrimaryQuestionCount: { type: Number, default: 6 },
-    generationVersion: { type: Number, default: 1 },
+    plannedPrimaryQuestionCount: { type: Number, default: 6, alias: "planned_primary_question_count" },
+    generationVersion: { type: Number, default: 1, alias: "generation_version" },
     questions: { type: [SectionBatchQuestionSchema], default: [] }
   },
-  { _id: false }
+  { _id: false, toJSON: { virtuals: true }, toObject: { virtuals: true } }
 );
 
 const AnswerItemSchema = new mongoose.Schema(

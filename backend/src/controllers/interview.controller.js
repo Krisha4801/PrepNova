@@ -713,9 +713,28 @@ async function getOrGenerateSectionBatch(session, sectionId) {
     newBatch = generateSectionBatchFallback(session, sectionId, plannedCount);
   }
 
-  session.sectionBatches.push(newBatch);
+  const normalizedBatch = {
+    sectionId: newBatch.sectionId || newBatch.section_id || sectionId,
+    generationMode: String(newBatch.generationMode || newBatch.generation_mode || session.questionCountMode || "6"),
+    plannedPrimaryQuestionCount: Number(newBatch.plannedPrimaryQuestionCount || newBatch.planned_primary_question_count || plannedCount),
+    generationVersion: Number(newBatch.generationVersion || newBatch.generation_version || 1),
+    questions: (newBatch.questions || []).map((q, idx) => ({
+      questionId: q.questionId || q.question_id || `q_${session.sessionId}_${sectionId}_${idx + 1}`,
+      sectionId: q.sectionId || q.section_id || sectionId,
+      order: Number(q.order || idx + 1),
+      type: q.type || "primary",
+      objective: q.objective || secMeta?.objective || "",
+      difficulty: q.difficulty || session.difficulty || "beginner",
+      text: q.text || q.question || "",
+      contextReferences: q.contextReferences || q.context_references || ["role"],
+      status: q.status || "pending"
+    }))
+  };
+
+  session.sectionBatches.push(normalizedBatch);
+  session.markModified("sectionBatches");
   await session.save();
-  return newBatch;
+  return normalizedBatch;
 }
 
 /**
@@ -752,6 +771,7 @@ async function advanceToNextPrimaryQuestion(session) {
   // Mark question as asked
   nextPending.status = "asked";
   session.currentBatchQuestionIndex = nextPending.order - 1;
+  session.markModified("sectionBatches");
 
   const nextQuestionItem = {
     questionId: nextPending.questionId || `turn_${session.questions.length + 1}_${Date.now()}`,
@@ -836,6 +856,17 @@ exports.followup = async (req, res, next) => {
         evaluationStatus: "pending",
         submittedAt: new Date()
       });
+
+      // Update question status in section batch
+      const activeBatch = (session.sectionBatches || []).find((b) => b.sectionId === currentQuestion.sectionId);
+      if (activeBatch && Array.isArray(activeBatch.questions)) {
+        const bq = activeBatch.questions.find((q) => q.questionId === currentQuestion.questionId);
+        if (bq) {
+          bq.status = "answered";
+          session.markModified("sectionBatches");
+        }
+      }
+
       await session.save();
     }
 
@@ -977,6 +1008,16 @@ exports.skipQuestion = async (req, res, next) => {
       evaluationStatus: "skipped",
       submittedAt: new Date()
     });
+
+    const activeBatch = (session.sectionBatches || []).find((b) => b.sectionId === currentQuestion.sectionId);
+    if (activeBatch && Array.isArray(activeBatch.questions)) {
+      const bq = activeBatch.questions.find((q) => q.questionId === currentQuestion.questionId);
+      if (bq) {
+        bq.status = "skipped";
+        session.markModified("sectionBatches");
+      }
+    }
+
     await session.save();
 
     if (session.answers.length >= session.totalQuestions) {
