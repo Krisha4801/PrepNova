@@ -168,5 +168,22 @@ exports.updateProfile = async (req, res) => {
   }
 };
 
+/**
+ * Controller: Change Password for authenticated user
+ * POST /api/auth/change-password
+ */
+exports.changePassword = async (req, res) => {
+  try {
+    const result = await authService.changePassword(req.user.id, req.body);
+    return res.status(200).json(result);
+  } catch (err) {
+    const statusCode = err.statusCode || 400;
+    return res.status(statusCode).json({
+      success: false,
+      error: err.message || "Failed to update password.",
+      errors: err.errors
+    });
+  }
+};
 
 

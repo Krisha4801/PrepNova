@@ -7,7 +7,8 @@ const {
   validateLoginInput,
   validateForgotPasswordInput,
   validateVerifyOtpInput,
-  validateResetPasswordInput
+  validateResetPasswordInput,
+  validateChangePasswordInput
 } = require("../validators/auth.validator");
 const {
   generateOTP,
@@ -248,9 +249,8 @@ class AuthService {
       user.passwordResetOTPHash = null;
       user.passwordResetOTPExpiresAt = null;
       await user.save().catch(() => {});
-      console.error(`[AuthService] Password reset email delivery failed:`, emailErr.message);
-      const deliveryErr = new Error("Failed to deliver verification email. Please check your email configuration and try again.");
-      deliveryErr.statusCode = 502;
+      const deliveryErr = new Error(emailErr.message || "Failed to deliver verification email. Please check your email configuration and try again.");
+      deliveryErr.statusCode = emailErr.statusCode || 502;
       throw deliveryErr;
     }
 
@@ -459,6 +459,69 @@ class AuthService {
       throw err;
     }
     return user.toJSON();
+  }
+
+  /**
+   * Updates an authenticated user's password.
+   */
+  async changePassword(userId, data = {}) {
+    checkDatabaseReady();
+    const validation = validateChangePasswordInput(data);
+    if (!validation.isValid) {
+      const err = new Error(validation.errors[0]);
+      err.statusCode = 400;
+      err.errors = validation.errors;
+      throw err;
+    }
+
+    const { currentPassword, newPassword } = data;
+    const user = await User.findById(userId);
+    if (!user || user.isActive === false) {
+      const err = new Error("User account no longer exists or is inactive.");
+      err.statusCode = 401;
+      throw err;
+    }
+
+    if (!user.password) {
+      const err = new Error("Your account was created via OAuth and does not have a local password. Please sign in with your OAuth provider.");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!isMatch) {
+      const err = new Error("Current password is incorrect.");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const isSamePassword = await bcrypt.compare(newPassword, user.password);
+    if (isSamePassword) {
+      const err = new Error("New password cannot be the same as your current password.");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const saltRounds = 10;
+    const passwordHash = await bcrypt.hash(newPassword, saltRounds);
+
+    user.password = passwordHash;
+    await user.save();
+
+    try {
+      await emailService.sendPasswordChangedEmail({
+        to: user.email,
+        name: user.name,
+        email: user.email
+      });
+    } catch (emailErr) {
+      console.error(`[AuthService] Password changed security email delivery failed:`, emailErr.message);
+    }
+
+    return {
+      success: true,
+      message: "Password has been successfully updated."
+    };
   }
 }
 

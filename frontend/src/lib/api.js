@@ -14,6 +14,7 @@ export const API_ENDPOINTS = {
   VERIFY_RESET_OTP: `${API_BASE_URL}/api/auth/verify-reset-otp`,
   RESET_PASSWORD: `${API_BASE_URL}/api/auth/reset-password`,
   RESEND_RESET_OTP: `${API_BASE_URL}/api/auth/resend-reset-otp`,
+  CHANGE_PASSWORD: `${API_BASE_URL}/api/auth/change-password`,
   OAUTH_INITIATE: (provider) => `${API_BASE_URL}/api/auth/oauth/${encodeURIComponent(provider)}`,
   OAUTH_EXCHANGE: `${API_BASE_URL}/api/auth/oauth/exchange`,
   OAUTH_PROVIDERS: `${API_BASE_URL}/api/auth/oauth/providers`,
@@ -371,6 +372,16 @@ export async function createJdApi(title, text) {
 
 export async function deleteJdApi(jdId) {
   return await apiFetch(`${API_BASE_URL}/api/jd/${encodeURIComponent(jdId)}`, { method: "DELETE" });
+}
+
+/**
+ * Change authenticated user password
+ */
+export async function changePasswordApi(currentPassword, newPassword, confirmPassword) {
+  return await apiFetch(API_ENDPOINTS.CHANGE_PASSWORD, {
+    method: "POST",
+    body: JSON.stringify({ currentPassword, newPassword, confirmPassword })
+  });
 }
 
 /**

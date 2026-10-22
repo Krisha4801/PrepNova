@@ -8,6 +8,7 @@ const {
   verifyResetOTP,
   resetPassword,
   updateProfile,
+  changePassword
 } = require("../controllers/auth.controller");
 const {
   getProviders,
@@ -41,6 +42,7 @@ router.get("/oauth/:provider/callback", handleCallback);
 router.get("/me", authenticateToken, getMe);
 router.put("/profile", authenticateToken, updateProfile);
 router.post("/logout", logoutUser);
+router.post("/change-password", authenticateToken, authRateLimiter, changePassword);
 
 module.exports = router;
 
