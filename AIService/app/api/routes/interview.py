@@ -167,8 +167,19 @@ async def validate_interview_context(request: dict):
         raw_resume = request.get("resume")
         raw_jd = request.get("jd")
 
-        parsed_resume = Resume.model_validate(raw_resume) if raw_resume else None
-        parsed_jd = JobDescription.model_validate(raw_jd) if raw_jd else None
+        parsed_resume = raw_resume
+        if raw_resume and isinstance(raw_resume, dict):
+            try:
+                parsed_resume = Resume.model_validate(raw_resume)
+            except Exception:
+                parsed_resume = raw_resume
+
+        parsed_jd = raw_jd
+        if raw_jd and isinstance(raw_jd, dict):
+            try:
+                parsed_jd = JobDescription.model_validate(raw_jd)
+            except Exception:
+                parsed_jd = raw_jd
 
         result = validator.validate(
             mode=mode,
@@ -182,3 +193,9 @@ async def validate_interview_context(request: dict):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Role validation error: {str(e)}"
         )
+
+
+@router.post("/validate-inputs")
+async def validate_interview_inputs(request: dict):
+    """Alias for /validate-context supporting 6-stage decision flow (PDF §10)."""
+    return await validate_interview_context(request)

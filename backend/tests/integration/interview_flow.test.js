@@ -414,4 +414,14 @@ describe("Interview Lifecycle & History Integration Tests", () => {
       assert.strictEqual(meRes.data.user.targetRole, "Senior Full Stack Engineer");
     });
   });
+
+  after(async () => {
+    if (mongoose.connection.readyState !== 0) {
+      await mongoose.disconnect();
+    }
+    if (server) {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
 });
+

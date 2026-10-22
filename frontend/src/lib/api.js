@@ -25,7 +25,8 @@ export const API_ENDPOINTS = {
   INTERVIEW_REPORT: (sessionId) => `${API_BASE_URL}/api/interview/${encodeURIComponent(sessionId)}/report`,
   INTERVIEW_RETRY_REPORT: (sessionId) => `${API_BASE_URL}/api/interview/${encodeURIComponent(sessionId)}/retry-report`,
   INTERVIEW_PDF: (sessionId) => `${API_BASE_URL}/api/interview/${encodeURIComponent(sessionId)}/pdf`,
-  INTERVIEW_END: (sessionId) => `${API_BASE_URL}/api/interview/${encodeURIComponent(sessionId)}`,
+  INTERVIEW_VALIDATE: `${API_BASE_URL}/api/interview/validate`,
+  INTERVIEW_FIT_CHECK: `${API_BASE_URL}/api/interview/fit-check`,
   RESUMES: `${API_BASE_URL}/api/resumes`,
   RESUME_UPLOAD: `${API_BASE_URL}/api/resumes/upload`,
   RESUME_BY_ID: (id) => `${API_BASE_URL}/api/resumes/${encodeURIComponent(id)}`,
@@ -275,6 +276,13 @@ export async function skipInterviewQuestionApi(payload) {
 export async function endInterviewApi(sessionId) {
   return await apiFetch(API_ENDPOINTS.INTERVIEW_END(sessionId), {
     method: "DELETE"
+  });
+}
+
+export async function validateInterviewInputsApi(payload) {
+  return await apiFetch(API_ENDPOINTS.INTERVIEW_VALIDATE, {
+    method: "POST",
+    body: JSON.stringify(payload)
   });
 }
 

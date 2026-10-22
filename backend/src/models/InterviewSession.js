@@ -41,8 +41,10 @@ const AnswerItemSchema = new mongoose.Schema(
 
 const EvaluationItemSchema = new mongoose.Schema(
   {
-    questionIndex: { type: Number, required: true },
+    questionIndex: { type: Number, default: 0 },
+    question_index: { type: Number, default: 0 },
     sectionId: { type: String, default: null },
+    section_id: { type: String, default: null },
     score: { type: Number, default: 0 },
     relevance: { type: Number, default: 0 },
     correctness: { type: Number, default: 0 },

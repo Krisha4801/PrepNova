@@ -45,15 +45,20 @@ async def extract_jd(
             temp_path = temp_file.name
 
         try:
-            # First try normal PDF text extraction
-            jd_text = extract_pdf_text(temp_path)
+            try:
+                # First try normal PDF text extraction
+                jd_text = extract_pdf_text(temp_path)
 
-            # If PDF has little/no text, use OCR
-            if not has_meaningful_text(jd_text):
-                jd_text = ocr_pdf(temp_path)
+                # If PDF has little/no text, use OCR
+                if not has_meaningful_text(jd_text):
+                    try:
+                        jd_text = ocr_pdf(temp_path)
+                    except Exception:
+                        pass
 
-            jd_text = clean_text(jd_text)
-
+                jd_text = clean_text(jd_text)
+            except ValueError as ve:
+                raise HTTPException(status_code=400, detail=str(ve))
         finally:
             os.remove(temp_path)
 

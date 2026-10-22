@@ -62,34 +62,38 @@ async def extract_resume(
         with open(file_path, "wb") as f:
             f.write(contents)
 
-        # -------------------------
-        # 2. Try normal PDF extraction
-        # -------------------------
+        try:
+            # -------------------------
+            # 2. Try normal PDF extraction
+            # -------------------------
+            text = extract_pdf_text(file_path)
+            extraction_method = "pdf_text"
 
-        text = extract_pdf_text(file_path)
-
-        extraction_method = "pdf_text"
-
-        # -------------------------
-        # 3. OCR fallback
-        # -------------------------
-
-        if not has_meaningful_text(text):
-
-            text = ocr_pdf(file_path)
-
-            extraction_method = "ocr"
+            # -------------------------
+            # 3. OCR fallback if no embedded text
+            # -------------------------
+            if not has_meaningful_text(text):
+                try:
+                    text = ocr_pdf(file_path)
+                    extraction_method = "ocr"
+                except Exception as ocr_err:
+                    if not text:
+                        raise HTTPException(
+                            status_code=422,
+                            detail=f"Could not extract usable text from scanned PDF: {str(ocr_err)}. Please upload a text-based PDF."
+                        )
+        except ValueError as ve:
+            raise HTTPException(status_code=400, detail=str(ve))
 
         # -------------------------
         # 4. Clean text
         # -------------------------
-
         text = clean_text(text)
 
-        if not text:
+        if not text or len(text.strip()) < 30:
             raise HTTPException(
                 status_code=422,
-                detail="Could not extract text from resume.",
+                detail="Uploaded PDF contains insufficient text to process as a resume. Please upload a document with readable text or valid experience sections."
             )
 
         # -------------------------

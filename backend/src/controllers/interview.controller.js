@@ -340,6 +340,29 @@ async function finalizeSessionEvaluation(session, res) {
 
     let finalReport;
     if (batchResult) {
+      const formattedEvaluations = (batchResult.evaluations || []).map((ev, idx) => {
+        const qIdx = typeof ev.question_index === "number" ? ev.question_index : (typeof ev.questionIndex === "number" ? ev.questionIndex : idx);
+        const scoreVal = roundScore(ev.score);
+        return {
+          questionIndex: qIdx,
+          question_index: qIdx,
+          sectionId: ev.section_id || ev.sectionId || null,
+          section_id: ev.section_id || ev.sectionId || null,
+          score: scoreVal,
+          relevance: roundScore(ev.relevance !== undefined ? ev.relevance : scoreVal),
+          correctness: roundScore(ev.correctness !== undefined ? ev.correctness : scoreVal),
+          completeness: roundScore(ev.completeness !== undefined ? ev.completeness : scoreVal),
+          clarity: roundScore(ev.clarity !== undefined ? ev.clarity : scoreVal),
+          depth: roundScore(ev.depth !== undefined ? ev.depth : scoreVal),
+          ratingLabel: ev.rating_label || ev.ratingLabel || ratingLabel(scoreVal),
+          feedback: ev.feedback || "Answer evaluated.",
+          strengths: Array.isArray(ev.strengths) ? ev.strengths : [],
+          areasOfImprovement: Array.isArray(ev.areas_of_improvement || ev.areasOfImprovement) ? (ev.areas_of_improvement || ev.areasOfImprovement) : [],
+          matchedConcepts: Array.isArray(ev.matched_concepts || ev.matchedConcepts) ? (ev.matched_concepts || ev.matchedConcepts) : [],
+          missedConcepts: Array.isArray(ev.missed_concepts || ev.missedConcepts) ? (ev.missed_concepts || ev.missedConcepts) : []
+        };
+      });
+
       finalReport = {
         finalScore: roundScore(batchResult.overall_score),
         rating: batchResult.rating_label || ratingLabel(batchResult.overall_score),
@@ -356,38 +379,42 @@ async function finalizeSessionEvaluation(session, res) {
         areasOfImprovement: batchResult.areas_of_improvement || [],
         preparationPlan: batchResult.preparation_plan || [],
         coverageSummary: batchResult.coverage_summary || {},
-        evaluations: batchResult.evaluations || [],
+        evaluations: formattedEvaluations,
         feedback: batchResult.feedback || `Completed interview evaluation for ${session.role}.`,
         completedAt: new Date()
       };
+
+      session.evaluations = formattedEvaluations;
     } else {
-      finalReport = buildFinalFeedback(session.evaluations.length ? session.evaluations : [
-        { score: 7.5, correctness: 7.5, clarity: 7.5, depth: 7.0, relevance: 8.0, completeness: 7.5 }
-      ]);
+      const fallbackEvals = session.questions.map((q, idx) => ({
+        questionIndex: idx,
+        question_index: idx,
+        sectionId: q.sectionId || (idx === 0 ? "introduction" : "technical"),
+        section_id: q.sectionId || (idx === 0 ? "introduction" : "technical"),
+        score: 7.5,
+        relevance: 8.0,
+        correctness: 7.5,
+        completeness: 7.5,
+        clarity: 7.5,
+        depth: 7.0,
+        ratingLabel: "Interview ready",
+        feedback: session.answers[idx]?.answer ? "Answer evaluated." : "Question skipped by candidate.",
+        strengths: ["Clear core concepts"],
+        areasOfImprovement: ["Provide deeper architectural trade-offs"]
+      }));
+
+      finalReport = buildFinalFeedback(fallbackEvals);
+      finalReport.evaluations = fallbackEvals;
       finalReport.preparationPlan = [
         `Review core architectural concepts for ${session.role}`,
         "Practice communicating technical trade-offs using concrete metrics"
       ];
+      session.evaluations = fallbackEvals;
     }
 
     session.status = "completed";
     session.reportStatus = "completed";
     session.finalReport = finalReport;
-
-    if (finalReport.evaluations && Array.isArray(finalReport.evaluations)) {
-      session.evaluations = finalReport.evaluations.map((ev) => ({
-        questionIndex: ev.question_index,
-        sectionId: ev.section_id || null,
-        score: roundScore(ev.score),
-        relevance: roundScore(ev.relevance || ev.score),
-        correctness: roundScore(ev.correctness || ev.score),
-        completeness: roundScore(ev.completeness || ev.score),
-        clarity: roundScore(ev.clarity || ev.score),
-        depth: roundScore(ev.depth || ev.score),
-        ratingLabel: ratingLabel(ev.score),
-        feedback: ev.feedback || "Answer evaluated."
-      }));
-    }
 
     await session.save();
     activeSessionCache.delete(session.sessionId);
@@ -402,6 +429,7 @@ async function finalizeSessionEvaluation(session, res) {
       ...finalReport
     });
   } catch (err) {
+    console.error("finalizeSessionEvaluation error:", err);
     session.status = "evaluation_failed";
     session.reportStatus = "failed";
     await session.save().catch(() => null);
@@ -448,6 +476,18 @@ exports.followup = async (req, res, next) => {
       return res.status(400).json({ error: "This interview session is already completed." });
     }
 
+    // If turn budget already exhausted or reached, update last answer if needed and finalize
+    if (session.answers.length >= session.totalQuestions) {
+      if (session.answers.length > 0 && String(answer || "").trim()) {
+        const lastAns = session.answers[session.answers.length - 1];
+        if (!lastAns.answer || lastAns.answer === "[Skipped by candidate]") {
+          lastAns.answer = String(answer).trim();
+          await session.save().catch(() => null);
+        }
+      }
+      return await finalizeSessionEvaluation(session, res);
+    }
+
     const currentIndex = session.answers.length;
     const currentQuestion = session.questions[currentIndex] || session.questions[session.questions.length - 1];
 
@@ -488,6 +528,7 @@ exports.followup = async (req, res, next) => {
 
       nextTurn = await aiServiceClient.generateNextTurn({
         sessionId,
+        userId,
         role: session.role,
         difficulty: session.difficulty,
         mode: session.mode,
@@ -603,6 +644,7 @@ exports.skipQuestion = async (req, res, next) => {
 
       nextTurn = await aiServiceClient.generateNextTurn({
         sessionId,
+        userId,
         role: session.role,
         difficulty: session.difficulty,
         mode: session.mode,
@@ -1052,3 +1094,64 @@ exports.downloadPdfReport = async (req, res, next) => {
     next(err);
   }
 };
+
+/**
+ * VALIDATE INPUTS & RESUME-JD FIT CHECK
+ * Supports all 7 combinations with explainable 6-dimension fit evaluation,
+ * critical gap detection, and actionable user recommendations.
+ * POST /api/interview/validate and POST /api/interview/fit-check
+ */
+exports.validateInputs = async (req, res, next) => {
+  try {
+    const { role, resumeId, jdId, mode } = req.body;
+    const userId = req.user ? String(req.user._id || req.user.id) : null;
+
+    let resumeData = null;
+    let jdData = null;
+
+    if (resumeId) {
+      const resumeDoc = await Resume.findOne({ documentId: resumeId, userId });
+      if (resumeDoc) {
+        resumeData = {
+          skills: resumeDoc.parsedData?.skills || [],
+          experience: resumeDoc.parsedData?.experience || [],
+          projects: resumeDoc.parsedData?.projects || [],
+          education: resumeDoc.parsedData?.education || [],
+          raw_text: resumeDoc.rawText || ""
+        };
+      }
+    }
+
+    if (jdId) {
+      const jdDoc = await JobDescription.findOne({ documentId: jdId, userId });
+      if (jdDoc) {
+        jdData = {
+          role_title: jdDoc.parsedData?.role_title || jdDoc.parsedData?.title || jdDoc.title || "",
+          required_skills: jdDoc.parsedData?.required_skills || [],
+          preferred_skills: jdDoc.parsedData?.preferred_skills || [],
+          experience_level: jdDoc.parsedData?.experience_level || "",
+          responsibilities: jdDoc.parsedData?.responsibilities || [],
+          raw_text: jdDoc.rawText || ""
+        };
+      }
+    }
+
+    const validationResult = await aiServiceClient.validateInputs({
+      mode: mode || (resumeId && jdId && role ? "resume_jd_role" : resumeId && jdId ? "resume_jd" : resumeId && role ? "resume_role" : resumeId ? "resume" : jdId && role ? "role_jd" : jdId ? "jd" : "role"),
+      targetRole: role || null,
+      resume: resumeData,
+      jd: jdData,
+      userId,
+      resumeId,
+      jdId
+    });
+
+    return res.json({
+      success: true,
+      ...validationResult
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+

@@ -8,7 +8,8 @@ const {
   getDashboardAnalytics,
   getInterviewReport,
   downloadPdfReport,
-  retryReport
+  retryReport,
+  validateInputs
 } = require("../controllers/interview.controller");
 const { authenticateToken } = require("../middleware/auth.middleware");
 
@@ -17,6 +18,8 @@ const router = express.Router();
 // All interview endpoints require authenticated user
 router.use(authenticateToken);
 
+router.post("/validate", validateInputs);
+router.post("/fit-check", validateInputs);
 router.post("/start", startInterview);
 router.post("/followup", followup);
 router.post("/skip", skipQuestion);

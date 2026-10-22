@@ -292,13 +292,36 @@ class AiServiceClient {
   }
 
   /**
+   * Validate alignment between candidate profile, target role, and job description
+   * Supports 6-stage decision flow, 6 fit dimensions, and standard messages (PDF §3, §9, §10)
+   * @param {Object} params - { mode, targetRole, resume, jd, userId, resumeId, jdId }
+   */
+  async validateInputs(params = {}) {
+    try {
+      const response = await this.httpClient.post("/interview/validate-inputs", {
+        mode: params.mode || "role",
+        target_role: params.targetRole || params.role || null,
+        resume: params.resume || null,
+        jd: params.jd || null,
+        user_id: params.userId || null,
+        resume_id: params.resumeId || null,
+        jd_id: params.jdId || null
+      });
+      return response.data;
+    } catch (err) {
+      throw normalizeAiServiceError(err, "Input validation and fit assessment");
+    }
+  }
+
+  /**
    * Generate the next conversational turn according to the blueprint and context
-   * @param {Object} params - { sessionId, role, difficulty, mode, resumeId, jdId, blueprint, history, currentSectionId, followUpsInCurrentSection, totalTurnsTaken, maxTurns }
+   * @param {Object} params - { sessionId, userId, role, difficulty, mode, resumeId, jdId, blueprint, history, currentSectionId, followUpsInCurrentSection, totalTurnsTaken, maxTurns }
    */
   async generateNextTurn(params = {}) {
     try {
       const response = await this.httpClient.post("/interview/next-turn", {
         session_id: params.sessionId,
+        user_id: params.userId || null,
         role: params.role || "Candidate",
         difficulty: params.difficulty || "beginner",
         mode: params.mode || null,

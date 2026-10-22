@@ -132,6 +132,7 @@ class PlanBlueprintRequest(BaseModel):
 
 class NextTurnRequest(BaseModel):
     session_id: str
+    user_id: Optional[str] = None
     role: str = "Candidate"
     difficulty: str = "beginner"
     mode: Optional[str] = None
