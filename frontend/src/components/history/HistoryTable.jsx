@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { 
   Search, 
   ChevronRight, 
@@ -9,56 +9,14 @@ import {
   X, 
   Play, 
   Download,
-  Filter
+  Filter,
+  Loader2,
+  Plus
 } from 'lucide-react';
 
 export default function HistoryTable({ 
-  initialReports = [
-    { 
-      id: 1, 
-      role: 'Frontend Developer', 
-      domain: 'Web Architecture • React & Performance', 
-      date: '14 Oct 2026', 
-      difficulty: 'Intermediate', 
-      score: 88, 
-      status: 'Completed',
-      duration: '24m 10s',
-      questions: 6
-    },
-    { 
-      id: 2, 
-      role: 'Full Stack Engineer', 
-      domain: 'Node.js & Distributed APIs', 
-      date: '11 Oct 2026', 
-      difficulty: 'Advanced', 
-      score: 92, 
-      status: 'Completed',
-      duration: '31m 45s',
-      questions: 6
-    },
-    { 
-      id: 3, 
-      role: 'Backend Go / Cloud Systems', 
-      domain: 'Microservices & Caching', 
-      date: '07 Oct 2026', 
-      difficulty: 'Advanced', 
-      score: null, 
-      status: 'In Progress',
-      duration: '12m 18s',
-      questions: 3
-    },
-    { 
-      id: 4, 
-      role: 'Product & System Design', 
-      domain: 'Technical Architecture & Scale', 
-      date: '03 Oct 2026', 
-      difficulty: 'Intermediate', 
-      score: 85, 
-      status: 'Completed',
-      duration: '28m 30s',
-      questions: 6
-    }
-  ],
+  initialReports = [],
+  isLoading = false,
   onViewReport,
   onExport 
 }) {
@@ -67,12 +25,12 @@ export default function HistoryTable({
   const [statusFilter, setStatusFilter] = useState('All');
 
   const filteredReports = useMemo(() => {
-    return initialReports.filter((item) => {
-      const matchesSearch = item.role.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.domain.toLowerCase().includes(searchTerm.toLowerCase());
+    return (initialReports || []).filter((item) => {
+      const matchesSearch = (item.role || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (item.domain || '').toLowerCase().includes(searchTerm.toLowerCase());
       
-      const matchesDifficulty = difficultyFilter === 'All' || item.difficulty.toLowerCase() === difficultyFilter.toLowerCase();
-      const matchesStatus = statusFilter === 'All' || item.status.toLowerCase() === statusFilter.toLowerCase();
+      const matchesDifficulty = difficultyFilter === 'All' || (item.difficulty || '').toLowerCase() === difficultyFilter.toLowerCase();
+      const matchesStatus = statusFilter === 'All' || (item.status || '').toLowerCase() === statusFilter.toLowerCase();
 
       return matchesSearch && matchesDifficulty && matchesStatus;
     });
@@ -133,7 +91,12 @@ export default function HistoryTable({
 
       {/* Table Container */}
       <div className="overflow-x-auto">
-        {filteredReports.length > 0 ? (
+        {isLoading ? (
+          <div className="py-16 text-center flex flex-col items-center justify-center gap-3">
+            <Loader2 className="w-7 h-7 text-indigo-600 animate-spin" />
+            <p className="text-xs font-semibold text-slate-600 dark:text-slate-400">Loading interview records...</p>
+          </div>
+        ) : filteredReports.length > 0 ? (
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b border-slate-100 dark:border-slate-800 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
@@ -159,7 +122,7 @@ export default function HistoryTable({
                   </td>
                   <td className="py-3.5 font-mono text-slate-600 dark:text-slate-300">{report.duration}</td>
                   <td className="py-3.5">
-                    {report.score ? (
+                    {report.score !== null && report.score !== undefined ? (
                       <span className="font-bold text-indigo-600 dark:text-indigo-400">{report.score}%</span>
                     ) : (
                       <span className="text-slate-400">—</span>
@@ -191,8 +154,26 @@ export default function HistoryTable({
             <div className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-400 flex items-center justify-center mb-2.5">
               <Inbox className="w-5 h-5" />
             </div>
-            <p className="text-xs font-bold text-slate-700 dark:text-slate-300">No mock sessions found</p>
-            <p className="text-[11px] text-slate-400 mt-0.5">Try adjusting your search query or filters.</p>
+            {initialReports && initialReports.length > 0 ? (
+              <>
+                <p className="text-xs font-bold text-slate-700 dark:text-slate-300">No matching mock sessions</p>
+                <p className="text-[11px] text-slate-400 mt-0.5">Try adjusting your search query or difficulty filters.</p>
+              </>
+            ) : (
+              <>
+                <p className="text-xs font-bold text-slate-700 dark:text-slate-300">No mock sessions completed yet</p>
+                <p className="text-[11px] text-slate-400 mt-0.5 max-w-xs text-center">
+                  Start your first interview session to track your performance and view detailed scoring rubrics.
+                </p>
+                <Link
+                  to="/start-interview"
+                  className="btn-primary mt-3 text-xs h-8 px-3.5"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Start Mock Session</span>
+                </Link>
+              </>
+            )}
           </div>
         )}
       </div>

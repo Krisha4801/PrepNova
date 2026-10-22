@@ -1146,25 +1146,47 @@ exports.getInterviewHistory = async (req, res, next) => {
         .select("-questions.groundingContext")
     ]);
 
-    const historyItems = sessions.map((s) => ({
-      sessionId: s.sessionId,
-      role: s.role,
-      targetRole: s.role,
-      difficulty: s.difficulty,
-      difficultyLevel: s.difficulty,
-      mode: s.mode,
-      interviewMode: s.mode,
-      status: s.status,
-      date: s.createdAt,
-      createdAt: s.createdAt,
-      completedAt: s.finalReport?.completedAt || s.updatedAt,
-      totalQuestions: s.totalQuestions,
-      questionsAnswered: s.answers.length,
-      finalScore: s.finalReport?.finalScore || 0,
-      score: s.finalReport?.finalScore ? Math.round(s.finalReport.finalScore * 10) : 0,
-      rating: s.finalReport?.rating || (s.status === "completed" ? "Completed" : "In Progress"),
-      categoryScores: s.finalReport?.categoryScores || {}
-    }));
+    const historyItems = sessions.map((s) => {
+      let durationSec = s.finalReport?.durationSeconds;
+      if (!durationSec && s.createdAt && (s.finalReport?.completedAt || s.updatedAt)) {
+        const endTime = s.finalReport?.completedAt || s.updatedAt;
+        const diff = Math.round((new Date(endTime) - new Date(s.createdAt)) / 1000);
+        if (diff > 0 && diff < 86400) {
+          durationSec = diff;
+        }
+      }
+      const mins = Math.floor((durationSec || 0) / 60);
+      const secs = (durationSec || 0) % 60;
+      const formattedDuration = durationSec > 0 ? `${mins}m ${secs.toString().padStart(2, "0")}s` : null;
+
+      const answeredCount = Array.isArray(s.answers) ? s.answers.length : 0;
+      const totalQ = s.totalQuestions || (Array.isArray(s.questions) ? s.questions.length : answeredCount) || 6;
+      const scoreVal = typeof s.finalReport?.finalScore === 'number' && s.finalReport.finalScore > 0 
+        ? s.finalReport.finalScore 
+        : null;
+
+      return {
+        sessionId: s.sessionId,
+        role: s.role,
+        targetRole: s.role,
+        difficulty: s.difficulty,
+        difficultyLevel: s.difficulty,
+        mode: s.mode,
+        interviewMode: s.mode,
+        status: s.status,
+        date: s.createdAt,
+        createdAt: s.createdAt,
+        completedAt: s.finalReport?.completedAt || s.updatedAt,
+        totalQuestions: totalQ,
+        questionsAnswered: answeredCount,
+        finalScore: scoreVal,
+        score: scoreVal !== null ? Math.round(scoreVal * 10) : null,
+        rating: s.finalReport?.rating || (s.status === "completed" ? "Completed" : "In Progress"),
+        categoryScores: s.finalReport?.categoryScores || {},
+        duration: formattedDuration || `${Math.max(1, answeredCount) * 2}m 00s`,
+        durationSeconds: durationSec || 0
+      };
+    });
 
     res.json({
       success: true,
