@@ -249,6 +249,20 @@ def validate_interview_mode_node(state: QuestionState) -> Dict[str, Any]:
             effective_jd_id = raw_jd_id
             effective_role = raw_role
 
+            if raw_jd_id and user_id and effective_role and effective_role not in ["Candidate", "Resume Candidate", "JD Candidate"]:
+                try:
+                    store = ChromaStore()
+                    jd_peek = store.search(query="job title requirements responsibilities", user_id=user_id, document_id=raw_jd_id, top_k=5)
+                    jd_chunks = []
+                    if jd_peek and "documents" in jd_peek and jd_peek["documents"]:
+                        jd_chunks = [d for d in jd_peek["documents"][0] if d and d.strip()]
+                    jd_text = " ".join(jd_chunks)
+                    conflict = detect_role_jd_conflict(role=effective_role, jd_text=jd_text, jd_chunks=jd_chunks)
+                    if conflict:
+                        return {"error": conflict, "validated_mode": "invalid"}
+                except Exception as e:
+                    logger.debug(f"validate_interview_mode_node conflict check: {e}")
+
         elif requested_mode == InterviewMode.RESUME_JD_ROLE.value:
             if not has_resume or not has_jd or not raw_role:
                 return {"error": "Resume + Role + JD mode requires resume_id, jd_id, and target role.", "validated_mode": "invalid"}
@@ -256,6 +270,20 @@ def validate_interview_mode_node(state: QuestionState) -> Dict[str, Any]:
             effective_resume_id = raw_resume_id
             effective_jd_id = raw_jd_id
             effective_role = raw_role
+
+            if raw_jd_id and user_id and effective_role and effective_role not in ["Candidate", "Resume Candidate", "JD Candidate"]:
+                try:
+                    store = ChromaStore()
+                    jd_peek = store.search(query="job title requirements responsibilities", user_id=user_id, document_id=raw_jd_id, top_k=5)
+                    jd_chunks = []
+                    if jd_peek and "documents" in jd_peek and jd_peek["documents"]:
+                        jd_chunks = [d for d in jd_peek["documents"][0] if d and d.strip()]
+                    jd_text = " ".join(jd_chunks)
+                    conflict = detect_role_jd_conflict(role=effective_role, jd_text=jd_text, jd_chunks=jd_chunks)
+                    if conflict:
+                        return {"error": conflict, "validated_mode": "invalid"}
+                except Exception as e:
+                    logger.debug(f"validate_interview_mode_node conflict check: {e}")
 
         elif requested_mode == InterviewMode.JD.value:
             if not has_jd:
@@ -347,123 +375,389 @@ def plan_blueprint_node(state: QuestionState) -> Dict[str, Any]:
     }
 
 
-def retrieve_context_node(state: QuestionState) -> Dict[str, Any]:
-    """
-    Source-restricted context retrieval.
-    Queries only the permitted stores for the validated mode.
-    Tags evidence clearly into Candidate Experience vs Job Requirements.
-    """
-    if state.error or state.validated_mode == "invalid":
-        return {"grounding_context": "", "insufficient_context": True}
+# Calibrated on BAAI/bge-small-en-v1.5: clear matches score >= 0.80, borderline/mismatches <= 0.71.
+ROLE_JD_SIM_PASS = 0.75
 
+
+def _llm_role_jd_arbiter(
+    role: str,
+    jd_title: str,
+    jd_chunks: List[str],
+    jd_skills: Optional[list],
+    sim_score: Optional[float],
+) -> Optional[Dict[str, str]]:
+    """
+    LLM semantic arbiter for borderline role-vs-JD pairs.
+    Returns {"verdict": "match"|"mismatch", "reason": str} or None on any failure.
+    """
+    try:
+        llm = LLMClient().get_llm()
+        chunks_block = "\n".join(f"- {c.strip()[:400]}" for c in jd_chunks[:5] if c and c.strip())
+        skills_block = ", ".join(str(s) for s in (jd_skills or [])[:20])
+        sim_line = f"{sim_score:.3f}" if sim_score is not None else "n/a"
+
+        system_prompt = """You are a job-role alignment checker for an interview preparation tool.
+Decide whether the candidate's selected role is a reasonable match for the provided Job Description.
+
+Rules:
+- Match if the JD's primary work overlaps the role's core work, even when titles differ (AI Engineer ~ ML Engineer ~ Data Scientist; Frontend Developer ~ React Developer; Backend ~ API Engineer).
+- A general "Software Engineer" or "Fullstack" role matches frontend, backend, or fullstack JDs.
+- Mismatch ONLY when the JD's primary focus is a clearly different discipline (e.g. Data Scientist vs Frontend Developer; Mobile Developer vs DevOps Engineer).
+- Seniority words (Senior, Junior, Lead, Intern) never cause a mismatch.
+- When uncertain, prefer "match" — this check should only block clearly wrong pairings.
+
+Return ONLY a JSON object, no markdown fences:
+{"verdict": "match"|"mismatch", "reason": "<one concise sentence the user will see>"}"""
+
+        user_prompt = f"""Selected candidate role: {role}
+Job Description title: {jd_title or '(not provided)'}
+Embedding similarity score (informational only): {sim_line}
+Required skills: {skills_block or '(not provided)'}
+
+Job Description excerpts:
+{chunks_block or '(no excerpts available)'}"""
+
+        response = llm.invoke([
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
+        ])
+        raw = response.content.replace("```json", "").replace("```", "").strip()
+        data = json.loads(raw)
+        verdict = str(data.get("verdict", "")).strip().lower()
+        reason = str(data.get("reason", "")).strip()
+        if verdict in ("match", "mismatch"):
+            return {"verdict": verdict, "reason": reason}
+        return None
+    except Exception as e:
+        logger.debug(f"Role-JD LLM arbiter skipped: {e}")
+        return None
+
+
+def detect_role_jd_conflict(
+    role: str,
+    jd_title: str = "",
+    jd_text: str = "",
+    jd_skills: list = None,
+    jd_chunks: Optional[List[str]] = None,
+) -> Optional[str]:
+    """
+    Hybrid role-vs-JD alignment check:
+      Tier 0 - exact/substring match (instant, free).
+      Tier 1 - embedding gate: max cosine sim across JD chunks >= ROLE_JD_SIM_PASS.
+      Tier 2 - LLM semantic arbiter for everything else.
+    Only returns an error message on a confirmed mismatch; any infrastructure
+    failure or uncertainty defaults to "no conflict" (never block on bad luck).
+    """
+    if not role or (not jd_title and not jd_text and not jd_skills):
+        return None
+
+    r_clean = role.strip().lower()
+    t_clean = (jd_title or "").strip().lower()
+    raw_clean = (jd_text or "").lower()
+
+    # Tier 0: exact / substring match - free, instant pass
+    if t_clean and (r_clean == t_clean or r_clean in t_clean or t_clean in r_clean):
+        return None
+    if raw_clean and r_clean in raw_clean:
+        return None
+
+    # Normalize chunk list for embedding + LLM context
+    if jd_chunks:
+        chunks = [c.strip() for c in jd_chunks if c and c.strip()]
+    elif jd_text and jd_text.strip():
+        chunks = [jd_text.strip()]
+    elif jd_title:
+        chunks = [jd_title]
+    else:
+        chunks = []
+
+    # Tier 1: embedding gate - max cosine similarity across individual chunks.
+    # Only runs when JD evidence is substantive; bare titles are too short for
+    # embeddings to separate domains reliably (e.g. "Software Engineer" vs
+    # "DevOps Engineer" titles score ~0.79 from the shared token "engineer").
+    sim_score: Optional[float] = None
+    try:
+        if chunks and sum(len(c) for c in chunks) >= 100:
+            emb_service = get_shared_embedding_service()
+            role_vec = emb_service.embed_query(role)
+            sims = [compute_cosine_similarity(role_vec, emb_service.embed_query(c[:1000])) for c in chunks[:6]]
+            if sims:
+                sim_score = max(sims)
+                if sim_score >= ROLE_JD_SIM_PASS:
+                    return None
+    except Exception as e:
+        logger.debug(f"Role-JD embedding gate skipped: {e}")
+
+    # Tier 2: LLM semantic arbiter for borderline / low-similarity pairs
+    arbiter = _llm_role_jd_arbiter(role, jd_title, chunks, jd_skills, sim_score)
+    if arbiter and arbiter.get("verdict") == "mismatch":
+        reason = arbiter.get("reason") or "it targets a different professional domain"
+        return (
+            f"Selected role '{role}' does not match the provided Job Description "
+            f"({reason}). Please select a role according to the Job Description."
+        )
+
+    # Match, unclear, or LLM unavailable -> never block
+    return None
+
+
+def build_grounded_context(
+    mode: str,
+    role: str,
+    user_id: Optional[str] = None,
+    resume_id: Optional[str] = None,
+    jd_id: Optional[str] = None,
+    active_query: Optional[str] = None,
+    focus_topic: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Constructs high-fidelity interview grounding context customized across the 7 modes:
+    - resume_jd: Extracts JD requirements -> queries candidate resume for matching projects & skills.
+    - resume_role: Extracts role benchmarks -> queries candidate resume for matching work & competencies.
+    - role_jd: Enforces role-JD compatibility -> heavy weight on JD details (85%) + role knowledge (15%).
+    - resume_jd_role: Enforces role-JD compatibility -> queries resume with combined JD and role criteria.
+    - resume, jd, role: Baseline single-source extractions.
+    """
     store = ChromaStore()
+    effective_role = role or "Candidate"
+    query = active_query or f"{effective_role} {focus_topic or ''}".strip()
     context_chunks = []
-    mode = state.validated_mode
-    query = state.target_search_query or f"{state.effective_role} {state.active_focus_topic}"
 
-    resume_chunks = []
-    jd_chunks = []
-    role_chunks = []
+    # Pre-validation for role_jd and resume_jd_role
+    if mode in [InterviewMode.ROLE_JD.value, InterviewMode.RESUME_JD_ROLE.value] and jd_id and user_id and effective_role and effective_role not in ["Candidate", "Resume Candidate", "JD Candidate"]:
+        try:
+            jd_peek = store.search(query="job title requirements responsibilities", user_id=user_id, document_id=jd_id, top_k=5)
+            jd_chunks = []
+            if jd_peek and "documents" in jd_peek and jd_peek["documents"]:
+                jd_chunks = [d for d in jd_peek["documents"][0] if d and d.strip()]
+            jd_text = " ".join(jd_chunks)
+            conflict = detect_role_jd_conflict(role=effective_role, jd_text=jd_text, jd_chunks=jd_chunks)
+            if conflict:
+                return {
+                    "grounding_context": "",
+                    "insufficient_context": True,
+                    "error": conflict,
+                    "conflict": True
+                }
+        except Exception as e:
+            logger.debug(f"Role-JD pre-check in build_grounded_context: {e}")
 
     try:
-        # 1. Resume Context (only if permitted by mode)
-        if mode in [
-            InterviewMode.RESUME_JD_ROLE.value,
-            InterviewMode.RESUME_JD.value,
-            InterviewMode.RESUME_ROLE.value,
-            InterviewMode.RESUME.value
-        ] and state.effective_resume_id and state.effective_user_id:
-            res_results = store.search(
-                query=query,
-                user_id=state.effective_user_id,
-                document_id=state.effective_resume_id,
-                top_k=3
-            )
-            if res_results and "documents" in res_results and res_results["documents"]:
-                docs = res_results["documents"][0]
-                metas = res_results.get("metadatas", [[]])[0] if "metadatas" in res_results and res_results["metadatas"] else [{}] * len(docs)
-                for doc, meta in zip(docs, metas):
-                    if doc and doc.strip():
-                        sec = (meta or {}).get("section", "experience")
-                        resume_chunks.append(f"[{sec.upper()}] {doc.strip()}")
+        # Case 1: resume_jd (Resume + JD)
+        if mode == InterviewMode.RESUME_JD.value:
+            jd_chunks = []
+            matching_resume_chunks = []
+            if jd_id and user_id:
+                jd_res = store.search(query=query or "key technical requirements skills responsibilities tools", user_id=user_id, document_id=jd_id, top_k=3)
+                if jd_res and "documents" in jd_res and jd_res["documents"]:
+                    docs = jd_res["documents"][0]
+                    metas = jd_res.get("metadatas", [[]])[0] if "metadatas" in jd_res and jd_res["metadatas"] else [{}] * len(docs)
+                    for d, m in zip(docs, metas):
+                        if d and d.strip():
+                            sec = (m or {}).get("section", "requirements")
+                            jd_chunks.append(f"[{sec.upper()}] {d.strip()}")
 
-        # 2. Job Description Context (only if permitted by mode)
-        if mode in [
-            InterviewMode.RESUME_JD_ROLE.value,
-            InterviewMode.RESUME_JD.value,
-            InterviewMode.ROLE_JD.value,
-            InterviewMode.JD.value
-        ] and state.effective_jd_id and state.effective_user_id:
-            jd_results = store.search(
-                query=query,
-                user_id=state.effective_user_id,
-                document_id=state.effective_jd_id,
-                top_k=3
-            )
-            if jd_results and "documents" in jd_results and jd_results["documents"]:
-                docs = jd_results["documents"][0]
-                metas = jd_results.get("metadatas", [[]])[0] if "metadatas" in jd_results and jd_results["metadatas"] else [{}] * len(docs)
-                for doc, meta in zip(docs, metas):
-                    if doc and doc.strip():
-                        sec = (meta or {}).get("section", "requirements")
-                        jd_chunks.append(f"[{sec.upper()}] {doc.strip()}")
+            jd_extract = " ".join([c[:120] for c in jd_chunks]) or query or "technical skills projects experience"
+            if resume_id and user_id:
+                res_res = store.search(query=jd_extract, user_id=user_id, document_id=resume_id, top_k=3)
+                if res_res and "documents" in res_res and res_res["documents"]:
+                    docs = res_res["documents"][0]
+                    metas = res_res.get("metadatas", [[]])[0] if "metadatas" in res_res and res_res["metadatas"] else [{}] * len(docs)
+                    for d, m in zip(docs, metas):
+                        if d and d.strip():
+                            sec = (m or {}).get("section", "experience")
+                            matching_resume_chunks.append(f"[{sec.upper()}] {d.strip()}")
 
-        # 3. Role Knowledge Base (only if permitted by mode)
-        role_modes = [
-            InterviewMode.RESUME_JD_ROLE.value,
-            InterviewMode.RESUME_ROLE.value,
-            InterviewMode.ROLE_JD.value,
-            InterviewMode.ROLE.value
-        ]
-        if mode in role_modes and state.effective_role and state.effective_role.strip():
-            target_role = state.effective_role.strip()
-            role_results = store.search_role(
-                query=query,
-                role=target_role,
-                top_k=3
-            )
-            if role_results and "documents" in role_results and role_results["documents"]:
-                docs = role_results["documents"][0]
-                metas = role_results.get("metadatas", [[]])[0] if "metadatas" in role_results and role_results["metadatas"] else [{}] * len(docs)
-                for doc, meta in zip(docs, metas):
-                    if doc and doc.strip():
-                        sec = (meta or {}).get("section", "core_domain")
-                        role_chunks.append(f"[{sec.upper()}] {doc.strip()}")
+            if matching_resume_chunks:
+                context_chunks.append("=== [Candidate Resume Matching Job Description Requirements] ===\n" + "\n".join(f"- {c}" for c in matching_resume_chunks))
+            if jd_chunks:
+                context_chunks.append("=== [Target Job Description Key Priorities & Requirements] ===\n" + "\n".join(f"- {c}" for c in jd_chunks))
 
+        # Case 2: resume_role (Resume + Role)
+        elif mode == InterviewMode.RESUME_ROLE.value:
+            matching_resume_chunks = []
+            role_chunks = []
+            role_query = f"{effective_role} core architecture patterns projects experience technologies"
+            if resume_id and user_id:
+                res_res = store.search(query=role_query, user_id=user_id, document_id=resume_id, top_k=3)
+                if res_res and "documents" in res_res and res_res["documents"]:
+                    docs = res_res["documents"][0]
+                    metas = res_res.get("metadatas", [[]])[0] if "metadatas" in res_res and res_res["metadatas"] else [{}] * len(docs)
+                    for d, m in zip(docs, metas):
+                        if d and d.strip():
+                            sec = (m or {}).get("section", "experience")
+                            matching_resume_chunks.append(f"[{sec.upper()}] {d.strip()}")
+
+            role_res = store.search_role(query=query or effective_role, role=effective_role, top_k=2)
+            if role_res and "documents" in role_res and role_res["documents"]:
+                docs = role_res["documents"][0]
+                for d in docs:
+                    if d and d.strip():
+                        role_chunks.append(f"[CORE BENCHMARK] {d.strip()}")
             if not role_chunks:
-                role_chunks.append(f"[CORE DOMAIN] Standard engineering competencies and architectural best practices for {target_role}.")
+                role_chunks.append(f"[CORE DOMAIN] Standard engineering competencies and architectural best practices for {effective_role}.")
 
-    except Exception:
-        pass
+            if matching_resume_chunks:
+                context_chunks.append(f"=== [Candidate Resume Experience Aligned with {effective_role}] ===\n" + "\n".join(f"- {c}" for c in matching_resume_chunks))
+            if role_chunks:
+                context_chunks.append(f"=== [Standard Industry Expectations for {effective_role}] ===\n" + "\n".join(f"- {c}" for c in role_chunks))
 
-    # Build clearly demarcated context sections with section provenance
-    if resume_chunks:
-        context_chunks.append(
-            "=== [Candidate Resume Experience - What candidate has done] ===\n" +
-            "\n".join(f"- {c}" for c in resume_chunks)
-        )
-    if jd_chunks:
-        context_chunks.append(
-            "=== [Target Job Description Requirements - What employer expects] ===\n" +
-            "\n".join(f"- {c}" for c in jd_chunks)
-        )
-    if role_chunks:
-        context_chunks.append(
-            f"=== [Standard Industry Best Practices for {state.effective_role}] ===\n" +
-            "\n".join(f"- {c}" for c in role_chunks)
-        )
+        # Case 3: role_jd (JD + Role)
+        elif mode == InterviewMode.ROLE_JD.value:
+            jd_chunks = []
+            role_chunks = []
+            if jd_id and user_id:
+                jd_res = store.search(query=query or f"{effective_role} requirements responsibilities tech stack", user_id=user_id, document_id=jd_id, top_k=4)
+                if jd_res and "documents" in jd_res and jd_res["documents"]:
+                    docs = jd_res["documents"][0]
+                    metas = jd_res.get("metadatas", [[]])[0] if "metadatas" in jd_res and jd_res["metadatas"] else [{}] * len(docs)
+                    for d, m in zip(docs, metas):
+                        if d and d.strip():
+                            sec = (m or {}).get("section", "requirements")
+                            jd_chunks.append(f"[{sec.upper()}] {d.strip()}")
+
+            role_res = store.search_role(query=query or effective_role, role=effective_role, top_k=1)
+            if role_res and "documents" in role_res and role_res["documents"]:
+                docs = role_res["documents"][0]
+                for d in docs:
+                    if d and d.strip():
+                        role_chunks.append(f"[STANDARDS] {d.strip()}")
+            if not role_chunks:
+                role_chunks.append(f"[STANDARDS] Standard clean architecture and performance guidelines for {effective_role}.")
+
+            if jd_chunks:
+                context_chunks.append("=== [Target Job Description Requirements (Primary Focus - 85%)] ===\n" + "\n".join(f"- {c}" for c in jd_chunks))
+            if role_chunks:
+                context_chunks.append(f"=== [Supplementary Industry Standards for {effective_role} (15%)] ===\n" + "\n".join(f"- {c}" for c in role_chunks))
+
+        # Case 4: resume_jd_role (Resume + JD + Role)
+        elif mode == InterviewMode.RESUME_JD_ROLE.value:
+            jd_chunks = []
+            matching_resume_chunks = []
+            role_chunks = []
+            if jd_id and user_id:
+                jd_res = store.search(query=query or f"{effective_role} requirements skills tools", user_id=user_id, document_id=jd_id, top_k=3)
+                if jd_res and "documents" in jd_res and jd_res["documents"]:
+                    docs = jd_res["documents"][0]
+                    metas = jd_res.get("metadatas", [[]])[0] if "metadatas" in jd_res and jd_res["metadatas"] else [{}] * len(docs)
+                    for d, m in zip(docs, metas):
+                        if d and d.strip():
+                            sec = (m or {}).get("section", "requirements")
+                            jd_chunks.append(f"[{sec.upper()}] {d.strip()}")
+
+            combined_query = (" ".join([c[:80] for c in jd_chunks]) + f" {effective_role} architecture projects").strip()
+            if resume_id and user_id:
+                res_res = store.search(query=combined_query, user_id=user_id, document_id=resume_id, top_k=3)
+                if res_res and "documents" in res_res and res_res["documents"]:
+                    docs = res_res["documents"][0]
+                    metas = res_res.get("metadatas", [[]])[0] if "metadatas" in res_res and res_res["metadatas"] else [{}] * len(docs)
+                    for d, m in zip(docs, metas):
+                        if d and d.strip():
+                            sec = (m or {}).get("section", "experience")
+                            matching_resume_chunks.append(f"[{sec.upper()}] {d.strip()}")
+
+            role_res = store.search_role(query=query or effective_role, role=effective_role, top_k=1)
+            if role_res and "documents" in role_res and role_res["documents"]:
+                docs = role_res["documents"][0]
+                for d in docs:
+                    if d and d.strip():
+                        role_chunks.append(f"[STANDARDS] {d.strip()}")
+            if not role_chunks:
+                role_chunks.append(f"[STANDARDS] Standard architecture trade-offs and code quality for {effective_role}.")
+
+            if matching_resume_chunks:
+                context_chunks.append(f"=== [Candidate Resume Matching {effective_role} & Job Description] ===\n" + "\n".join(f"- {c}" for c in matching_resume_chunks))
+            if jd_chunks:
+                context_chunks.append("=== [Target Job Description Key Priorities & Requirements] ===\n" + "\n".join(f"- {c}" for c in jd_chunks))
+            if role_chunks:
+                context_chunks.append(f"=== [Supplementary Industry Standards for {effective_role}] ===\n" + "\n".join(f"- {c}" for c in role_chunks))
+
+        # Baseline: resume only
+        elif mode == InterviewMode.RESUME.value:
+            resume_chunks = []
+            if resume_id and user_id:
+                res_res = store.search(query=query or "technical skills projects experience", user_id=user_id, document_id=resume_id, top_k=3)
+                if res_res and "documents" in res_res and res_res["documents"]:
+                    docs = res_res["documents"][0]
+                    for d in docs:
+                        if d and d.strip():
+                            resume_chunks.append(f"[RESUME] {d.strip()}")
+            if resume_chunks:
+                context_chunks.append("=== [Candidate Resume Experience] ===\n" + "\n".join(f"- {c}" for c in resume_chunks))
+
+        # Baseline: jd only
+        elif mode == InterviewMode.JD.value:
+            jd_chunks = []
+            if jd_id and user_id:
+                jd_res = store.search(query=query or "job requirements responsibilities tools", user_id=user_id, document_id=jd_id, top_k=3)
+                if jd_res and "documents" in jd_res and jd_res["documents"]:
+                    docs = jd_res["documents"][0]
+                    for d in docs:
+                        if d and d.strip():
+                            jd_chunks.append(f"[REQUIREMENTS] {d.strip()}")
+            if jd_chunks:
+                context_chunks.append("=== [Target Job Description Requirements] ===\n" + "\n".join(f"- {c}" for c in jd_chunks))
+
+        # Baseline: role only
+        elif mode == InterviewMode.ROLE.value:
+            role_chunks = []
+            role_res = store.search_role(query=query or effective_role, role=effective_role, top_k=3)
+            if role_res and "documents" in role_res and role_res["documents"]:
+                docs = role_res["documents"][0]
+                for d in docs:
+                    if d and d.strip():
+                        role_chunks.append(f"[CORE DOMAIN] {d.strip()}")
+            if not role_chunks:
+                role_chunks.append(f"[CORE DOMAIN] Core engineering competencies and architectural best practices for {effective_role}.")
+            context_chunks.append(f"=== [Standard Industry Best Practices for {effective_role}] ===\n" + "\n".join(f"- {c}" for c in role_chunks))
+
+    except Exception as e:
+        logger.warning(f"Error during context building in mode {mode}: {e}")
 
     insufficient = False
     if not context_chunks:
         insufficient = True
         context_chunks.append(
-            f"=== [Standard Knowledge for {state.effective_role}] ===\n"
-            f"Assess core competencies in {state.active_focus_topic or state.effective_role}."
+            f"=== [Standard Knowledge for {effective_role}] ===\n"
+            f"Assess core competencies in {focus_topic or effective_role}."
         )
 
     return {
         "grounding_context": "\n\n".join(context_chunks),
-        "insufficient_context": insufficient
+        "insufficient_context": insufficient,
+        "error": None,
+        "conflict": False
+    }
+
+
+def retrieve_context_node(state: QuestionState) -> Dict[str, Any]:
+    """
+    Source-restricted context retrieval node using build_grounded_context.
+    Enforces mode-specific cross-referencing and source isolation.
+    """
+    if state.error or state.validated_mode == "invalid":
+        return {"grounding_context": "", "insufficient_context": True}
+
+    res = build_grounded_context(
+        mode=state.validated_mode,
+        role=state.effective_role,
+        user_id=state.effective_user_id,
+        resume_id=state.effective_resume_id,
+        jd_id=state.effective_jd_id,
+        active_query=state.target_search_query,
+        focus_topic=state.active_focus_topic
+    )
+
+    if res.get("error"):
+        return {
+            "grounding_context": "",
+            "insufficient_context": True,
+            "error": res["error"]
+        }
+
+    return {
+        "grounding_context": res.get("grounding_context", ""),
+        "insufficient_context": res.get("insufficient_context", False)
     }
 
 
@@ -826,11 +1120,34 @@ evaluation_workflow = build_evaluation_graph()
 def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprint:
     """
     Creates and returns a deterministic, role- and duration-calibrated Interview Blueprint.
-    Allocates question budgets and objectives across standard sections.
+    Allocates question budgets and objectives across standard sections tailored to the active mode.
     """
     role = request.role or "Software Engineer"
     difficulty = request.difficulty.value if hasattr(request.difficulty, "value") else str(request.difficulty or "beginner")
     target_duration = int(request.target_duration_minutes or 30)
+    mode_str = request.mode.value if request.mode and hasattr(request.mode, "value") else (str(request.mode) if request.mode else "role")
+
+    # Conflict check for role_jd and resume_jd_role modes
+    if mode_str in [InterviewMode.ROLE_JD.value, InterviewMode.RESUME_JD_ROLE.value] and request.jd_id and request.user_id and role not in ["Candidate", "Resume Candidate", "JD Candidate"]:
+        try:
+            store = ChromaStore()
+            jd_peek = store.search(query="job title requirements responsibilities", user_id=request.user_id, document_id=request.jd_id, top_k=5)
+            jd_chunks = []
+            if jd_peek and "documents" in jd_peek and jd_peek["documents"]:
+                jd_chunks = [d for d in jd_peek["documents"][0] if d and d.strip()]
+            jd_text = " ".join(jd_chunks)
+            conflict = detect_role_jd_conflict(
+                role=role,
+                jd_title=getattr(request, "jd_title", "") or "",
+                jd_text=jd_text,
+                jd_chunks=jd_chunks,
+            )
+            if conflict:
+                raise ValueError(conflict)
+        except ValueError:
+            raise
+        except Exception as e:
+            logger.debug(f"plan_interview_blueprint conflict check: {e}")
 
     has_resume = bool(request.resume_id)
     has_jd = bool(request.jd_id)
@@ -856,13 +1173,24 @@ def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprin
         )
     ]
 
-    # Section 2: Projects
+    # Section 2: Projects (Mode-customized objective)
+    if mode_str == InterviewMode.RESUME_JD.value:
+        proj_obj = "Assess technical ownership on candidate's project that best aligns with the Job Description's requirements"
+    elif mode_str == InterviewMode.RESUME_ROLE.value:
+        proj_obj = f"Assess technical ownership on candidate's resume projects most relevant to {role}"
+    elif mode_str == InterviewMode.ROLE_JD.value:
+        proj_obj = "Assess system ownership and delivery capabilities for projects matching the Job Description's core tech stack"
+    elif mode_str == InterviewMode.RESUME_JD_ROLE.value:
+        proj_obj = f"Assess candidate ownership on resume projects directly aligned with the Job Description's {role} requirements"
+    else:
+        proj_obj = "Assess technical ownership, architecture choices, debugging challenges, and measurable impact"
+
     sections.append(
         BlueprintSection(
             id="projects",
             type="projects",
             title="Key Projects & Personal Ownership",
-            objective="Assess technical ownership, architecture choices, debugging challenges, and measurable impact",
+            objective=proj_obj,
             priority="high",
             target_question_count=1,
             target_minutes=5.0 if target_duration >= 30 else 4.0,
@@ -890,13 +1218,24 @@ def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprin
             )
         )
 
-    # Section 4: Skills & Practical Application
+    # Section 4: Skills & Practical Application (Mode-customized objective)
+    if mode_str == InterviewMode.RESUME_JD.value:
+        skills_obj = "Assess candidate's hands-on proficiency in the intersection of Job Description requirements and resume experience"
+    elif mode_str == InterviewMode.RESUME_ROLE.value:
+        skills_obj = f"Assess candidate's depth in core {role} competencies and architectural trade-offs"
+    elif mode_str == InterviewMode.ROLE_JD.value:
+        skills_obj = "Assess candidate depth in the specific tools, libraries, and frameworks demanded by the Job Description"
+    elif mode_str == InterviewMode.RESUME_JD_ROLE.value:
+        skills_obj = f"Assess candidate mastery across {role} core skills prioritized in the Job Description"
+    else:
+        skills_obj = f"Assess depth and hands-on application of core {role} skills"
+
     sections.append(
         BlueprintSection(
             id="skills",
             type="skills",
             title="Core Skills & Practical Application",
-            objective=f"Assess depth and hands-on application of core {role} skills",
+            objective=skills_obj,
             priority="high",
             target_question_count=1,
             target_minutes=5.0 if target_duration >= 30 else 3.0,
@@ -922,13 +1261,22 @@ def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprin
         )
     )
 
-    # Section 6: Scenario / Applied Problem Solving
+    # Section 6: Scenario / Applied Problem Solving (Mode-customized objective)
+    if mode_str == InterviewMode.RESUME_JD.value:
+        scen_obj = "Assess trade-offs, debugging, and system decisions derived directly from the Job Description's tech stack"
+    elif mode_str == InterviewMode.ROLE_JD.value:
+        scen_obj = "Assess incident management and scaling trade-offs framed around the Job Description's domain constraints"
+    elif mode_str == InterviewMode.RESUME_JD_ROLE.value:
+        scen_obj = f"Assess applied problem solving and trade-offs under Job Description constraints for a {role}"
+    else:
+        scen_obj = "Assess trade-off analysis, performance diagnosis, failure resilience, and architectural reasoning under constraints"
+
     sections.append(
         BlueprintSection(
             id="scenario",
             type="scenario",
             title="Scenario & Applied Problem Solving",
-            objective="Assess trade-off analysis, performance diagnosis, failure resilience, and architectural reasoning under constraints",
+            objective=scen_obj,
             priority="high",
             target_question_count=1,
             target_minutes=6.0 if target_duration >= 30 else 4.0,
@@ -1099,33 +1447,22 @@ Do NOT output multiple questions or any pleasantries."""
     ]
     ack = acknowledgments[len(history) % len(acknowledgments)] if last_section_id != "introduction" else "Thank you for the introduction."
 
-    # Section-specific prompts & scoped context retrieval (PDF §6, §7, §8.1)
+    # Section-specific prompts & scoped context retrieval via specialized 7-mode engine
     sec_id = next_section.id
-    retrieved_snippets = []
-    if request.user_id and (request.resume_id or request.jd_id):
-        try:
-            store = ChromaStore()
-            query_target = f"{next_section.title} {role}"
-            if request.resume_id:
-                res_results = store.search(query=query_target, user_id=request.user_id, document_id=request.resume_id, top_k=2)
-                docs = res_results.get("documents", [[]])[0] if res_results else []
-                for doc_text in docs:
-                    if doc_text and len(doc_text.strip()) > 15:
-                        clean_snip = doc_text.strip()[:200].replace("\n", " ")
-                        retrieved_snippets.append(f"Candidate Resume: {clean_snip}")
-            if request.jd_id:
-                jd_results = store.search(query=query_target, user_id=request.user_id, document_id=request.jd_id, top_k=2)
-                docs = jd_results.get("documents", [[]])[0] if jd_results else []
-                for doc_text in docs:
-                    if doc_text and len(doc_text.strip()) > 15:
-                        clean_snip = doc_text.strip()[:200].replace("\n", " ")
-                        retrieved_snippets.append(f"Job Requirement: {clean_snip}")
-        except Exception as e:
-            logger.debug(f"Chroma retrieval for next turn skipped: {e}")
-
+    mode_val = request.mode or "role"
+    ctx_res = build_grounded_context(
+        mode=mode_val,
+        role=role,
+        user_id=request.user_id,
+        resume_id=request.resume_id,
+        jd_id=request.jd_id,
+        active_query=f"{next_section.title} {role}",
+        focus_topic=next_section.title
+    )
     context_block = ""
-    if retrieved_snippets:
-        context_block = "\n<untrusted_source_context>\n" + "\n".join(retrieved_snippets) + "\n</untrusted_source_context>\n"
+    grounding_str = ctx_res.get("grounding_context", "")
+    if grounding_str:
+        context_block = f"\n<untrusted_source_context>\n{grounding_str}\n</untrusted_source_context>\n"
 
     if sec_id == "projects":
         prompt_instruction = f"Ask about a substantial project the candidate worked on relevant to {role}, focusing on technical ownership, key design decisions, and measurable outcomes."

@@ -209,6 +209,19 @@ exports.startInterview = async (req, res, next) => {
     }
     const effectiveJdId = jdPermittedModes.includes(mode) ? (jdId || null) : null;
 
+    // Fetch JD title to pass into the AI service (used by hybrid role-JD conflict check)
+    let jdTitle = "";
+    if (effectiveJdId) {
+      try {
+        const jdDoc = await JobDescription.findOne({ documentId: effectiveJdId, userId });
+        if (jdDoc) {
+          jdTitle = jdDoc.parsedData?.role_title || jdDoc.parsedData?.title || jdDoc.title || jdDoc.parsedData?.job_info?.title || "";
+        }
+      } catch (jdFetchErr) {
+        console.warn("JD title lookup warning:", jdFetchErr.message);
+      }
+    }
+
     // 3. For non-role modes (resume, jd, resume_jd), role is NOT required or forced
     const nonRoleModes = ["resume", "jd", "resume_jd"];
     if (nonRoleModes.includes(mode)) {
@@ -235,10 +248,14 @@ exports.startInterview = async (req, res, next) => {
         mode,
         resumeId: effectiveResumeId,
         jdId: effectiveJdId,
+        jdTitle: jdTitle || undefined,
         targetDurationMinutes: durationMinutes,
         focusAreas: Array.isArray(focusAreas) ? focusAreas : []
       });
     } catch (blueprintErr) {
+      if (blueprintErr.statusCode === 400 || (blueprintErr.message && blueprintErr.message.toLowerCase().includes("does not match"))) {
+        return res.status(400).json({ error: blueprintErr.message });
+      }
       console.warn("Blueprint planning fallback:", blueprintErr.message);
     }
 

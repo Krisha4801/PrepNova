@@ -126,6 +126,7 @@ class PlanBlueprintRequest(BaseModel):
     mode: Optional[InterviewMode] = None
     resume_id: Optional[str] = None
     jd_id: Optional[str] = None
+    jd_title: Optional[str] = None
     target_duration_minutes: int = 30
     focus_areas: List[str] = Field(default_factory=list)
 

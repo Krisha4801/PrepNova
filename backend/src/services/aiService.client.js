@@ -271,7 +271,7 @@ class AiServiceClient {
 
   /**
    * Plan a structured interview blueprint before presenting the first question
-   * @param {Object} params - { userId, role, difficulty, mode, resumeId, jdId, targetDurationMinutes, focusAreas }
+   * @param {Object} params - { userId, role, difficulty, mode, resumeId, jdId, jdTitle, targetDurationMinutes, focusAreas }
    */
   async planBlueprint(params = {}) {
     try {
@@ -282,6 +282,7 @@ class AiServiceClient {
         mode: params.mode || null,
         resume_id: params.resumeId || null,
         jd_id: params.jdId || null,
+        jd_title: params.jdTitle || null,
         target_duration_minutes: params.targetDurationMinutes || 30,
         focus_areas: params.focusAreas || []
       });
