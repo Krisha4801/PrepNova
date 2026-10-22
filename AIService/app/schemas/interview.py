@@ -128,6 +128,7 @@ class PlanBlueprintRequest(BaseModel):
     jd_id: Optional[str] = None
     jd_title: Optional[str] = None
     target_duration_minutes: int = 30
+    max_questions: Optional[int] = None
     focus_areas: List[str] = Field(default_factory=list)
 
 

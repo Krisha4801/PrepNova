@@ -14,8 +14,8 @@ export const INTERVIEW_DEFAULTS = Object.freeze({
   ROLE: 'Frontend Developer',
   DIFFICULTY: 'Intermediate',
   QUESTION_COUNT: 6,
-  FINAL_SCORE: 8.2,
-  RATING: 8,
+  FINAL_SCORE: 0,
+  RATING: 0,
 });
 
 export const INITIAL_QUESTION_TEXT = 'Loading your first interview question...';

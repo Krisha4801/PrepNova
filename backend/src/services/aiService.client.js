@@ -284,6 +284,7 @@ class AiServiceClient {
         jd_id: params.jdId || null,
         jd_title: params.jdTitle || null,
         target_duration_minutes: params.targetDurationMinutes || 30,
+        max_questions: params.maxQuestions || null,
         focus_areas: params.focusAreas || []
       });
       return response.data;
@@ -354,7 +355,7 @@ class AiServiceClient {
         blueprint: params.blueprint || null,
         resume_id: params.resumeId || null,
         jd_id: params.jdId || null
-      });
+      }, { timeout: 90000 });
       return response.data;
     } catch (err) {
       throw normalizeAiServiceError(err, "Session batch evaluation");

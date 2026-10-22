@@ -1302,6 +1302,11 @@ def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprin
         )
     )
 
+    if request.max_questions and request.max_questions > 0 and len(sections) > request.max_questions:
+        intro_section = sections[0]
+        other_sections = sections[1:]
+        sections = [intro_section] + other_sections[:request.max_questions - 1]
+
     return InterviewBlueprint(
         version=1,
         role=role,
@@ -1539,14 +1544,23 @@ def evaluate_full_session(request: EvaluateSessionRequest) -> SessionEvaluationR
     role = request.role or "Software Engineer"
     difficulty = request.difficulty or "beginner"
 
-    if not transcript:
+    has_substantive_answers = any(
+        not item.is_skipped and item.answer and item.answer.strip() and "skipped" not in item.answer.lower()
+        for item in transcript
+    )
+    if not transcript or not has_substantive_answers:
         return SessionEvaluationResult(
-            overall_score=7.0,
-            rating_label="Interview ready",
-            category_scores={"correctness": 7.0, "clarity": 7.0, "depth": 7.0, "relevance": 7.0, "completeness": 7.0},
-            feedback="No answers submitted in this session.",
-            strengths=["Session initialized."],
-            areas_of_improvement=["Submit answers to receive personalized feedback."],
+            overall_score=0.0,
+            rating_label="Needs fundamentals",
+            category_scores={"correctness": 0.0, "clarity": 0.0, "depth": 0.0, "relevance": 0.0, "completeness": 0.0},
+            feedback="Candidate did not provide substantive responses to interview questions. Assessment marked as incomplete.",
+            strengths=[],
+            areas_of_improvement=["All questions were skipped or left unanswered. Practice attempting each question with concrete examples."],
+            preparation_plan=[
+                f"Review core fundamentals for {role}",
+                "Practice speaking and typing responses to standard interview questions",
+                "Attempt mock sessions and complete all questions without skipping"
+            ],
             evaluations=[],
             source="empty_session"
         )

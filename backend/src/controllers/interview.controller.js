@@ -237,6 +237,9 @@ exports.startInterview = async (req, res, next) => {
     const selectedLevel = normalizeLevel(level) || "beginner";
     const sessionId = createSessionId();
     const durationMinutes = Math.round(Number(req.body.durationMinutes) || 30);
+    const requestedMaxQuestions = req.body.maxQuestions || req.body.numberOfQuestions
+      ? Math.max(1, Math.min(20, Number(req.body.maxQuestions || req.body.numberOfQuestions)))
+      : null;
 
     // Call LangGraph AI engine to generate interview blueprint
     let blueprint = null;
@@ -250,6 +253,7 @@ exports.startInterview = async (req, res, next) => {
         jdId: effectiveJdId,
         jdTitle: jdTitle || undefined,
         targetDurationMinutes: durationMinutes,
+        maxQuestions: requestedMaxQuestions,
         focusAreas: Array.isArray(focusAreas) ? focusAreas : []
       });
     } catch (blueprintErr) {
@@ -277,7 +281,13 @@ exports.startInterview = async (req, res, next) => {
       estimatedSeconds: 90
     };
 
-    const totalQuestions = blueprint?.sections?.length || Math.max(1, Math.min(20, Number(req.body.maxQuestions) || MAX_QUESTIONS));
+    const totalQuestions = requestedMaxQuestions || (blueprint?.sections?.length ? blueprint.sections.length : MAX_QUESTIONS);
+
+    if (blueprint && Array.isArray(blueprint.sections) && blueprint.sections.length > totalQuestions) {
+      const intro = blueprint.sections.find(s => s.section_id === "introduction") || blueprint.sections[0];
+      const others = blueprint.sections.filter(s => s !== intro);
+      blueprint.sections = [intro, ...others.slice(0, Math.max(0, totalQuestions - 1))];
+    }
 
     // Create durable session in MongoDB
     const sessionDoc = await InterviewSession.create({
@@ -403,29 +413,66 @@ async function finalizeSessionEvaluation(session, res) {
 
       session.evaluations = formattedEvaluations;
     } else {
-      const fallbackEvals = session.questions.map((q, idx) => ({
-        questionIndex: idx,
-        question_index: idx,
-        sectionId: q.sectionId || (idx === 0 ? "introduction" : "technical"),
-        section_id: q.sectionId || (idx === 0 ? "introduction" : "technical"),
-        score: 7.5,
-        relevance: 8.0,
-        correctness: 7.5,
-        completeness: 7.5,
-        clarity: 7.5,
-        depth: 7.0,
-        ratingLabel: "Interview ready",
-        feedback: session.answers[idx]?.answer ? "Answer evaluated." : "Question skipped by candidate.",
-        strengths: ["Clear core concepts"],
-        areasOfImprovement: ["Provide deeper architectural trade-offs"]
-      }));
+      const answeredTurns = session.answers.filter(
+        (a) => a && !a.isSkipped && String(a.answer || "").trim() && !String(a.answer).toLowerCase().includes("skipped")
+      );
+      const isUnansweredSession = answeredTurns.length === 0;
 
-      finalReport = buildFinalFeedback(fallbackEvals);
-      finalReport.evaluations = fallbackEvals;
-      finalReport.preparationPlan = [
-        `Review core architectural concepts for ${session.role}`,
-        "Practice communicating technical trade-offs using concrete metrics"
-      ];
+      const fallbackEvals = session.questions.map((q, idx) => {
+        const ansObj = session.answers[idx];
+        const hasSubstantiveAnswer = ansObj && !ansObj.isSkipped && String(ansObj.answer || "").trim() && !String(ansObj.answer).toLowerCase().includes("skipped");
+        const qScore = hasSubstantiveAnswer ? 6.5 : 0.0;
+        return {
+          questionIndex: idx,
+          question_index: idx,
+          sectionId: q.sectionId || (idx === 0 ? "introduction" : "technical"),
+          section_id: q.sectionId || (idx === 0 ? "introduction" : "technical"),
+          score: qScore,
+          relevance: hasSubstantiveAnswer ? 7.0 : 0.0,
+          correctness: hasSubstantiveAnswer ? 6.5 : 0.0,
+          completeness: hasSubstantiveAnswer ? 6.5 : 0.0,
+          clarity: hasSubstantiveAnswer ? 7.0 : 0.0,
+          depth: hasSubstantiveAnswer ? 6.0 : 0.0,
+          ratingLabel: hasSubstantiveAnswer ? ratingLabel(qScore) : "Unanswered",
+          feedback: hasSubstantiveAnswer ? "Answer recorded." : "Question skipped or unanswered by candidate.",
+          strengths: hasSubstantiveAnswer ? ["Attempted response"] : [],
+          areasOfImprovement: hasSubstantiveAnswer ? ["Provide deeper architectural trade-offs"] : ["Attempt question with concrete technical details"]
+        };
+      });
+
+      if (isUnansweredSession) {
+        finalReport = {
+          finalScore: 0.0,
+          rating: "Needs fundamentals",
+          categoryScores: {
+            correctness: 0.0,
+            clarity: 0.0,
+            depth: 0.0,
+            relevance: 0.0,
+            completeness: 0.0
+          },
+          introEvaluation: null,
+          sectionSummaries: {},
+          strengths: [],
+          areasOfImprovement: ["All questions were skipped or left unanswered. Practice attempting each question with concrete examples."],
+          preparationPlan: [
+            `Review core fundamentals for ${session.role}`,
+            "Practice speaking and typing responses to standard interview questions",
+            "Attempt mock sessions and complete all questions without skipping"
+          ],
+          coverageSummary: {},
+          evaluations: fallbackEvals,
+          feedback: "Candidate did not provide substantive responses to interview questions. Assessment marked as incomplete.",
+          completedAt: new Date()
+        };
+      } else {
+        finalReport = buildFinalFeedback(fallbackEvals);
+        finalReport.evaluations = fallbackEvals;
+        finalReport.preparationPlan = [
+          `Review core architectural concepts for ${session.role}`,
+          "Practice communicating technical trade-offs using concrete metrics"
+        ];
+      }
       session.evaluations = fallbackEvals;
     }
 

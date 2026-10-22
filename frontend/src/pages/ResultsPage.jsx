@@ -39,24 +39,63 @@ export default function ResultsPage() {
   const loadReport = async () => {
     if (!sessionId || sessionId === 'session-completed') {
       setLoading(false);
-      return;
+      return null;
     }
     try {
       const res = await getInterviewReportApi(sessionId);
-      if (res.session) {
-        setReport(res.session);
+      const sessionObj = res?.session || (res?.sessionId ? res : null);
+      if (sessionObj) {
+        setReport(sessionObj);
+        return sessionObj;
       }
     } catch (err) {
       console.warn("Could not fetch remote interview report:", err);
     } finally {
       setLoading(false);
     }
+    return null;
   };
 
   useEffect(() => {
     let isMounted = true;
-    loadReport();
-    return () => { isMounted = false; };
+    let pollInterval = null;
+    let attempts = 0;
+    const maxAttempts = 30; // Poll for up to 60s
+
+    const checkAndPoll = async () => {
+      const initialReport = await loadReport();
+      if (!isMounted) return;
+
+      const isStillRunning =
+        !initialReport?.finalReport &&
+        (initialReport?.reportStatus === 'running' ||
+          initialReport?.reportStatus === 'not_started' ||
+          initialReport?.status === 'evaluating' ||
+          !initialReport);
+
+      if (isStillRunning) {
+        pollInterval = setInterval(async () => {
+          attempts += 1;
+          if (!isMounted) return;
+          const updated = await loadReport();
+          if (
+            updated?.finalReport ||
+            updated?.reportStatus === 'completed' ||
+            updated?.reportStatus === 'failed' ||
+            attempts >= maxAttempts
+          ) {
+            clearInterval(pollInterval);
+          }
+        }, 2000);
+      }
+    };
+
+    checkAndPoll();
+
+    return () => {
+      isMounted = false;
+      if (pollInterval) clearInterval(pollInterval);
+    };
   }, [sessionId]);
 
   const handleRetryEvaluation = async () => {
@@ -78,46 +117,60 @@ export default function ResultsPage() {
   const role = report?.targetRole || stateData.role || localStorage.getItem('prepnova_role') || 'Software Engineer';
   const difficulty = report?.difficultyLevel || stateData.difficulty || localStorage.getItem('prepnova_difficulty') || 'Intermediate';
 
-  const rawScore = report?.finalScore !== undefined ? report.finalScore : (stateData.finalScore !== undefined ? stateData.finalScore : 8.2);
-  const overallScore = Math.round(Number(rawScore) * 10);
-  const durationText = report?.duration || stateData.duration || '12m 40s';
-  const questionsCount = report?.questionsAnswered || stateData.questionsAnswered || stateData.totalQuestions || 6;
-  const totalQuestions = report?.totalQuestions || stateData.totalQuestions || 6;
+  const rawScore = typeof report?.finalScore === 'number'
+    ? report.finalScore
+    : (typeof stateData.finalScore === 'number' ? stateData.finalScore : 0);
+  const overallScore = Math.max(0, Math.min(100, Math.round(Number(rawScore) * 10)));
+  const durationText = report?.duration || stateData.duration || '00:00';
+  const totalQuestions = report?.totalQuestions || stateData.totalQuestions || 3;
+  const rawQuestionsCount = report?.questionsAnswered ?? stateData.questionsAnswered ?? totalQuestions;
+  const questionsCount = Math.min(rawQuestionsCount, totalQuestions);
 
-  const categoryScores = report?.categoryScores || stateData.categoryScores || {
-    relevance: 8.5,
-    correctness: 8.5,
-    completeness: 8.0,
-    clarity: 8.0,
-    depth: 7.8
+  const getDimScore = (val) => (typeof val === 'number' ? val : 0);
+
+  const categoryScores = {
+    relevance: getDimScore(report?.categoryScores?.relevance ?? stateData.categoryScores?.relevance),
+    correctness: getDimScore(report?.categoryScores?.correctness ?? stateData.categoryScores?.correctness),
+    completeness: getDimScore(report?.categoryScores?.completeness ?? stateData.categoryScores?.completeness),
+    clarity: getDimScore(report?.categoryScores?.clarity ?? stateData.categoryScores?.clarity),
+    depth: getDimScore(report?.categoryScores?.depth ?? stateData.categoryScores?.depth),
   };
 
   const introEvaluation = report?.introEvaluation || null;
-  const preparationPlan = report?.preparationPlan?.length ? report.preparationPlan : [
-    `Practice articulating architectural trade-offs using quantifiable metrics for ${role}.`,
-    'Structure problem-solving responses using the Definition -> Mechanism -> Trade-off pattern.',
-    'Review edge cases, error boundary patterns, and recovery mechanisms.'
-  ];
-
   const sectionSummaries = report?.sectionSummaries || {};
 
-  const strengths = report?.strengths?.length ? report.strengths : [
-    'Accurately identified core technical definitions and architectural primitives.',
-    'Demonstrated concise, professional communication when addressing prompt questions.',
-    'Structured responses with clear context and rationale.'
-  ];
+  const strengths = report?.strengths?.length
+    ? report.strengths
+    : (overallScore > 0
+        ? ['Demonstrated engagement with prompt topics during the interview.']
+        : ['No substantive answers provided during this session to assess strengths.']);
 
-  const weaknesses = report?.weaknesses?.length ? report.weaknesses : [
-    'Elaborate further on scaling bottlenecks and memory/runtime tradeoffs.',
-    'Provide concrete production examples or quantifiable metrics in answers.',
-    'Review edge cases and error handling mechanisms during code design questions.'
-  ];
+  const weaknesses = report?.weaknesses?.length
+    ? report.weaknesses
+    : (overallScore > 0
+        ? ['Elaborate further on scaling bottlenecks and concrete metrics in answers.']
+        : ['Questions were skipped or left unanswered. Practice attempting each question with concrete examples.']);
+
+  const preparationPlan = report?.preparationPlan?.length
+    ? report.preparationPlan
+    : (overallScore > 0
+        ? [
+            `Practice articulating architectural trade-offs using quantifiable metrics for ${role}.`,
+            'Structure problem-solving responses using the Definition -> Mechanism -> Trade-off pattern.',
+            'Review edge cases, error boundary patterns, and recovery mechanisms.'
+          ]
+        : [
+            `Review core technical fundamentals for ${role}.`,
+            'Practice answering mock questions aloud without skipping.',
+            'Structure responses using key architectural primitives and trade-offs.'
+          ]);
 
   const getRatingLabel = (score) => {
     if (score >= 85) return 'Interview Ready';
     if (score >= 70) return 'Solid Foundation';
     if (score >= 50) return 'Needs Targeted Practice';
-    return 'Review Fundamentals';
+    if (score > 0) return 'Review Fundamentals';
+    return 'Incomplete Assessment';
   };
 
   const handleDownloadReport = async () => {
@@ -227,8 +280,17 @@ ${preparationPlan.map((p, i) => `${i + 1}. ${p}`).join('\n')}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
             <div className="space-y-2">
               <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-indigo-900/60 border border-indigo-700/50 text-indigo-300 text-xs font-semibold">
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>Evaluation Complete</span>
+                {isEvaluating && !report?.finalReport ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Evaluating Answers...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Evaluation Complete</span>
+                  </>
+                )}
               </div>
               <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
                 {role} Scorecard
@@ -302,16 +364,16 @@ ${preparationPlan.map((p, i) => `${i + 1}. ${p}`).join('\n')}
               <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider block">Technical Correctness</span>
               <div className="flex items-baseline justify-between">
                 <span className="text-2xl font-extrabold text-slate-900 dark:text-white">
-                  {Math.round((categoryScores.correctness || 8.5) * 10)}%
+                  {Math.round(categoryScores.correctness * 10)}%
                 </span>
-                <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-                  {categoryScores.correctness >= 7 ? 'Accurate' : 'Review Needed'}
+                <span className={`text-xs font-semibold ${categoryScores.correctness >= 7 ? 'text-emerald-600 dark:text-emerald-400' : (categoryScores.correctness > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500 dark:text-slate-400')}`}>
+                  {categoryScores.correctness >= 7 ? 'Accurate' : (categoryScores.correctness > 0 ? 'Review Needed' : 'Not Assessed')}
                 </span>
               </div>
               <div className="w-full bg-slate-200 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
                 <div 
-                  className="bg-emerald-500 h-full rounded-full" 
-                  style={{ width: `${Math.round((categoryScores.correctness || 8.5) * 10)}%` }} 
+                  className="bg-emerald-500 h-full rounded-full transition-all duration-500" 
+                  style={{ width: `${Math.round(categoryScores.correctness * 10)}%` }} 
                 />
               </div>
             </div>
@@ -320,16 +382,16 @@ ${preparationPlan.map((p, i) => `${i + 1}. ${p}`).join('\n')}
               <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider block">Communication Clarity</span>
               <div className="flex items-baseline justify-between">
                 <span className="text-2xl font-extrabold text-slate-900 dark:text-white">
-                  {Math.round((categoryScores.clarity || 8.0) * 10)}%
+                  {Math.round(categoryScores.clarity * 10)}%
                 </span>
-                <span className="text-xs font-semibold text-indigo-600 dark:text-indigo-400">
-                  {categoryScores.clarity >= 7 ? 'Structured' : 'Needs Structure'}
+                <span className={`text-xs font-semibold ${categoryScores.clarity >= 7 ? 'text-indigo-600 dark:text-indigo-400' : (categoryScores.clarity > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500 dark:text-slate-400')}`}>
+                  {categoryScores.clarity >= 7 ? 'Structured' : (categoryScores.clarity > 0 ? 'Needs Structure' : 'Not Assessed')}
                 </span>
               </div>
               <div className="w-full bg-slate-200 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
                 <div 
-                  className="bg-indigo-600 h-full rounded-full" 
-                  style={{ width: `${Math.round((categoryScores.clarity || 8.0) * 10)}%` }} 
+                  className="bg-indigo-600 h-full rounded-full transition-all duration-500" 
+                  style={{ width: `${Math.round(categoryScores.clarity * 10)}%` }} 
                 />
               </div>
             </div>
@@ -338,16 +400,16 @@ ${preparationPlan.map((p, i) => `${i + 1}. ${p}`).join('\n')}
               <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider block">Technical Depth</span>
               <div className="flex items-baseline justify-between">
                 <span className="text-2xl font-extrabold text-slate-900 dark:text-white">
-                  {Math.round((categoryScores.depth || 7.8) * 10)}%
+                  {Math.round(categoryScores.depth * 10)}%
                 </span>
-                <span className="text-xs font-semibold text-blue-600 dark:text-blue-400">
-                  {categoryScores.depth >= 7 ? 'Detailed' : 'Add Trade-offs'}
+                <span className={`text-xs font-semibold ${categoryScores.depth >= 7 ? 'text-blue-600 dark:text-blue-400' : (categoryScores.depth > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500 dark:text-slate-400')}`}>
+                  {categoryScores.depth >= 7 ? 'Detailed' : (categoryScores.depth > 0 ? 'Add Trade-offs' : 'Not Assessed')}
                 </span>
               </div>
               <div className="w-full bg-slate-200 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
                 <div 
-                  className="bg-blue-600 h-full rounded-full" 
-                  style={{ width: `${Math.round((categoryScores.depth || 7.8) * 10)}%` }} 
+                  className="bg-blue-600 h-full rounded-full transition-all duration-500" 
+                  style={{ width: `${Math.round(categoryScores.depth * 10)}%` }} 
                 />
               </div>
             </div>
