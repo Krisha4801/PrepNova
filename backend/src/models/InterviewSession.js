@@ -10,7 +10,13 @@ const QuestionItemSchema = new mongoose.Schema(
     groundingContext: { type: String, default: null },
     expectedConcepts: { type: [String], default: [] },
     expectedAnswer: { type: String, default: null },
-    source: { type: String, default: "rag_llm" }
+    source: { type: String, default: "rag_llm" },
+    sectionId: { type: String, default: "introduction" },
+    questionType: { type: String, enum: ["primary", "follow_up"], default: "primary" },
+    parentQuestionId: { type: String, default: null },
+    reasonCode: { type: String, default: null },
+    expectedEvidence: { type: [String], default: [] },
+    estimatedSeconds: { type: Number, default: 60 }
   },
   { _id: false }
 );
@@ -18,9 +24,16 @@ const QuestionItemSchema = new mongoose.Schema(
 const AnswerItemSchema = new mongoose.Schema(
   {
     questionIndex: { type: Number, required: true },
+    turnId: { type: String, default: null },
+    sectionId: { type: String, default: "introduction" },
     answer: { type: String, default: "" },
     isSkipped: { type: Boolean, default: false },
     audioUsed: { type: Boolean, default: false },
+    evaluationStatus: {
+      type: String,
+      enum: ["pending", "evaluated", "skipped"],
+      default: "pending"
+    },
     submittedAt: { type: Date, default: Date.now }
   },
   { _id: false }
@@ -29,6 +42,7 @@ const AnswerItemSchema = new mongoose.Schema(
 const EvaluationItemSchema = new mongoose.Schema(
   {
     questionIndex: { type: Number, required: true },
+    sectionId: { type: String, default: null },
     score: { type: Number, default: 0 },
     relevance: { type: Number, default: 0 },
     correctness: { type: Number, default: 0 },
@@ -58,8 +72,23 @@ const FinalReportSchema = new mongoose.Schema(
       relevance: { type: Number, default: 0 },
       completeness: { type: Number, default: 0 }
     },
+    introEvaluation: {
+      score: { type: Number, default: 8.0 },
+      structure: { type: String, default: "" },
+      roleRelevance: { type: String, default: "" },
+      evidence: { type: String, default: "" },
+      conciseness: { type: String, default: "" },
+      clarity: { type: String, default: "" },
+      strengths: { type: [String], default: [] },
+      improvements: { type: [String], default: [] },
+      sampleImprovedAnswer: { type: String, default: null }
+    },
+    sectionSummaries: { type: mongoose.Schema.Types.Mixed, default: {} },
     strengths: { type: [String], default: [] },
     areasOfImprovement: { type: [String], default: [] },
+    preparationPlan: { type: [String], default: [] },
+    coverageSummary: { type: mongoose.Schema.Types.Mixed, default: {} },
+    evaluations: { type: [EvaluationItemSchema], default: [] },
     feedback: { type: String, default: "" },
     completedAt: { type: Date, default: Date.now },
     durationSeconds: { type: Number, default: 0 }
@@ -107,9 +136,19 @@ const InterviewSessionSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["in_progress", "completed", "abandoned"],
+      enum: ["preparing", "in_progress", "evaluating", "completed", "evaluation_failed", "abandoned"],
       default: "in_progress",
       index: true
+    },
+    reportStatus: {
+      type: String,
+      enum: ["not_started", "pending", "running", "completed", "failed"],
+      default: "not_started",
+      index: true
+    },
+    blueprint: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null
     },
     totalQuestions: {
       type: Number,
@@ -142,3 +181,4 @@ const InterviewSessionSchema = new mongoose.Schema(
 );
 
 module.exports = mongoose.model("InterviewSession", InterviewSessionSchema);
+

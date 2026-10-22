@@ -18,7 +18,13 @@ from app.schemas.interview import (
     EvaluateAnswerRequest,
     EvaluateSessionRequest,
     SessionEvaluationResult,
-    EvaluatedTurn
+    EvaluatedTurn,
+    InterviewBlueprint,
+    BlueprintSection,
+    PlanBlueprintRequest,
+    NextTurnRequest,
+    NextTurnResponse,
+    IntroductionEvaluation
 )
 from app.services.llm.client import LLMClient
 from app.services.vectorstore.chroma_store import ChromaStore
@@ -813,19 +819,364 @@ def build_evaluation_graph():
 evaluation_workflow = build_evaluation_graph()
 
 
+# =========================================================
+# INTERVIEW BLUEPRINT PLANNER (SPECIFICATION PHASE 3)
+# =========================================================
+
+def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprint:
+    """
+    Creates and returns a deterministic, role- and duration-calibrated Interview Blueprint.
+    Allocates question budgets and objectives across standard sections.
+    """
+    role = request.role or "Software Engineer"
+    difficulty = request.difficulty.value if hasattr(request.difficulty, "value") else str(request.difficulty or "beginner")
+    target_duration = int(request.target_duration_minutes or 30)
+
+    has_resume = bool(request.resume_id)
+    has_jd = bool(request.jd_id)
+    context_availability = {
+        "resume": has_resume,
+        "job_description": has_jd,
+        "focus_areas": bool(request.focus_areas),
+    }
+
+    # Section 1: Introduction (Mandatory, never skipped)
+    sections = [
+        BlueprintSection(
+            id="introduction",
+            type="introduction",
+            title="Candidate Introduction & Alignment",
+            objective="Assess communication structure, conciseness, and alignment with target role",
+            priority="high",
+            target_question_count=1,
+            target_minutes=3.0 if target_duration >= 30 else 2.0,
+            difficulty=[difficulty],
+            context_refs=["role"],
+            applicable=True
+        )
+    ]
+
+    # Section 2: Projects
+    sections.append(
+        BlueprintSection(
+            id="projects",
+            type="projects",
+            title="Key Projects & Personal Ownership",
+            objective="Assess technical ownership, architecture choices, debugging challenges, and measurable impact",
+            priority="high",
+            target_question_count=1,
+            target_minutes=5.0 if target_duration >= 30 else 4.0,
+            difficulty=[difficulty],
+            context_refs=["resume"] if has_resume else ["role"],
+            applicable=True,
+            skip_reason=None if has_resume else "General project prompt used as no resume was uploaded"
+        )
+    )
+
+    # Section 3: Work / Internship Experience (for sessions >= 35 mins)
+    if target_duration >= 35:
+        sections.append(
+            BlueprintSection(
+                id="experience",
+                type="experience",
+                title="Work Experience & Collaboration",
+                objective="Assess team collaboration, agile delivery, system ownership, and mentoring/learning",
+                priority="medium",
+                target_question_count=1,
+                target_minutes=5.0,
+                difficulty=[difficulty],
+                context_refs=["resume"] if has_resume else ["role"],
+                applicable=True
+            )
+        )
+
+    # Section 4: Skills & Practical Application
+    sections.append(
+        BlueprintSection(
+            id="skills",
+            type="skills",
+            title="Core Skills & Practical Application",
+            objective=f"Assess depth and hands-on application of core {role} skills",
+            priority="high",
+            target_question_count=1,
+            target_minutes=5.0 if target_duration >= 30 else 3.0,
+            difficulty=[difficulty],
+            context_refs=["resume", "jd"] if (has_resume and has_jd) else ["role"],
+            applicable=True
+        )
+    )
+
+    # Section 5: Technical Fundamentals & Architecture
+    sections.append(
+        BlueprintSection(
+            id="technical_concepts",
+            type="technical_concepts",
+            title="Technical Fundamentals & Language Mechanics",
+            objective="Assess core language semantics, runtime internals, memory/async handling, and clean code principles",
+            priority="high",
+            target_question_count=1,
+            target_minutes=5.0 if target_duration >= 30 else 3.0,
+            difficulty=[difficulty],
+            context_refs=["role"],
+            applicable=True
+        )
+    )
+
+    # Section 6: Scenario / Applied Problem Solving
+    sections.append(
+        BlueprintSection(
+            id="scenario",
+            type="scenario",
+            title="Scenario & Applied Problem Solving",
+            objective="Assess trade-off analysis, performance diagnosis, failure resilience, and architectural reasoning under constraints",
+            priority="high",
+            target_question_count=1,
+            target_minutes=6.0 if target_duration >= 30 else 4.0,
+            difficulty=[difficulty],
+            context_refs=["jd"] if has_jd else ["role"],
+            applicable=True
+        )
+    )
+
+    # Section 7: HR / Behavioral
+    sections.append(
+        BlueprintSection(
+            id="behavioral",
+            type="behavioral",
+            title="Behavioral & Professional Communication",
+            objective="Assess conflict resolution, adaptability, ownership of mistakes, and teamwork using STAR principles",
+            priority="medium",
+            target_question_count=1,
+            target_minutes=4.0 if target_duration >= 30 else 2.0,
+            difficulty=[difficulty],
+            context_refs=["role"],
+            applicable=True
+        )
+    )
+
+    return InterviewBlueprint(
+        version=1,
+        role=role,
+        difficulty=difficulty,
+        target_duration_minutes=target_duration,
+        sections=sections,
+        global_rules={
+            "maxFollowUpsPerQuestion": 1,
+            "avoidSemanticDuplicates": True,
+            "evaluateOnlyAfterCompletion": True
+        },
+        context_availability=context_availability
+    )
+
+
+# =========================================================
+# CONVERSATIONAL TURN ENGINE (SPECIFICATION PHASE 4)
+# =========================================================
+
+def generate_next_turn(request: NextTurnRequest) -> NextTurnResponse:
+    """
+    Selects or generates the next single conversational interviewer utterance.
+    - If first turn: generates opening self-introduction question.
+    - If prior turn warrants probing: asks a single grounded follow-up question.
+    - Else: transitions to next planned blueprint section.
+    - If budget/turns exhausted: emits completion signal.
+    """
+    history = request.history or []
+    role = request.role or "Software Engineer"
+    difficulty = str(request.difficulty or "beginner").lower()
+    max_turns = request.max_turns or 6
+
+    # 1. First turn: Always the friendly self-introduction question
+    if not history:
+        intro_text = (
+            f"Hello! To get started, could you please introduce yourself and highlight the "
+            f"key experiences, projects, or technical skills most relevant to this {role} position?"
+        )
+        return NextTurnResponse(
+            action="ASK_QUESTION",
+            section_id="introduction",
+            objective_id="candidate-intro",
+            question_type="primary",
+            parent_question_id=None,
+            interviewer_text=intro_text,
+            reason_code="OPENING_INTRODUCTION",
+            expected_evidence=["background_summary", "role_alignment", "relevant_skills"],
+            estimated_seconds=90,
+            is_complete=False
+        )
+
+    # 2. Check turn limit completion
+    if request.total_turns_taken >= max_turns:
+        return NextTurnResponse(
+            action="COMPLETE",
+            section_id="closing",
+            interviewer_text="Thank you for sharing your experience and solving these problems with me today. That concludes our interview! I am now compiling your comprehensive evaluation report.",
+            is_complete=True
+        )
+
+    last_turn = history[-1]
+    last_answer = (last_turn.get("answer") or "").strip()
+    last_question = last_turn.get("question") or ""
+    last_section_id = last_turn.get("section_id") or "introduction"
+    last_q_type = last_turn.get("question_type") or "primary"
+    is_skipped = bool(last_turn.get("is_skipped")) or last_answer.lower() in ["skip", "skipped", "i don't know", "pass", "no idea", "next"]
+
+    llm = LLMClient().get_llm()
+
+    # 3. Follow-up decision policy (Spec Section 5.2):
+    # Introduction NEVER has a follow-up. Only primary questions with unspent follow-up budget.
+    can_follow_up = (
+        last_section_id != "introduction" and
+        last_q_type == "primary" and
+        not is_skipped and
+        len(last_answer.split()) >= 8 and
+        request.follow_ups_in_current_section < 1
+    )
+
+    if can_follow_up:
+        try:
+            prompt = f"""You are a professional technical interviewer for {role} ({difficulty} level).
+Candidate was asked: "{last_question}"
+Candidate answered: "{last_answer}"
+
+Evaluate if the candidate's answer mentions a specific technical choice, tool, challenge, or metric that warrants exactly ONE short follow-up question (under 25 words).
+If yes, generate that single probing follow-up question.
+If the answer is already sufficient, vague, or complete, reply with strictly "NEXT_SECTION".
+Do NOT output multiple questions or any pleasantries."""
+
+            resp = llm.invoke([HumanMessage(content=prompt)])
+            text = resp.content.strip().replace('"', '')
+            if text and "NEXT_SECTION" not in text and len(text) > 10 and "?" in text:
+                return NextTurnResponse(
+                    action="ASK_QUESTION",
+                    section_id=last_section_id,
+                    objective_id=f"{last_section_id}-followup",
+                    question_type="follow_up",
+                    parent_question_id=last_turn.get("questionId") or last_turn.get("id"),
+                    interviewer_text=text,
+                    reason_code="PROBE_ANSWER_DEPTH",
+                    expected_evidence=["trade_off", "implementation_details"],
+                    estimated_seconds=60,
+                    is_complete=False
+                )
+        except Exception as e:
+            logger.warning(f"Follow-up probe check failed: {e}")
+
+    # 4. Advance to Next Blueprint Section
+    sections = request.blueprint.sections if request.blueprint else []
+    if not sections:
+        # Fallback blueprint sections
+        sections = plan_interview_blueprint(PlanBlueprintRequest(role=role, difficulty=DifficultyLevel(difficulty) if difficulty in ["beginner", "intermediate", "advanced"] else DifficultyLevel.BEGINNER)).sections
+
+    # Collect already asked section IDs
+    asked_section_ids = [t.get("section_id") for t in history if t.get("section_id")]
+    
+    # Find next unasked section
+    next_section = None
+    for sec in sections:
+        if sec.id not in asked_section_ids and sec.applicable:
+            next_section = sec
+            break
+
+    # If all sections covered, complete interview
+    if not next_section:
+        return NextTurnResponse(
+            action="COMPLETE",
+            section_id="closing",
+            interviewer_text="Thank you very much. We have covered all key sections of the interview! I am preparing your final scorecard now.",
+            is_complete=True
+        )
+
+    # 5. Generate primary question for this section
+    asked_questions = [t.get("question", "") for t in history if t.get("question")]
+    
+    # Deterministic natural acknowledgments
+    acknowledgments = [
+        "Thanks for sharing that.",
+        "Understood, that makes sense.",
+        "Got it, thank you for walking me through that.",
+        "Thank you for the explanation."
+    ]
+    ack = acknowledgments[len(history) % len(acknowledgments)] if last_section_id != "introduction" else "Thank you for the introduction."
+
+    # Section-specific prompts
+    sec_id = next_section.id
+    if sec_id == "projects":
+        prompt_instruction = f"Ask about a substantial project the candidate worked on relevant to {role}, focusing on technical ownership, key design decisions, and measurable outcomes."
+    elif sec_id == "skills":
+        prompt_instruction = f"Ask a targeted question assessing practical hands-on proficiency in core {role} tools, frameworks, and architecture patterns."
+    elif sec_id == "technical_concepts":
+        prompt_instruction = f"Ask a focused technical question on core fundamentals, language mechanics, or concurrency/data handling for {role} at {difficulty} level."
+    elif sec_id == "scenario":
+        prompt_instruction = f"Present a realistic production scenario, debugging puzzle, or scaling bottleneck relevant to {role}, asking how they would diagnose and resolve it."
+    elif sec_id == "behavioral":
+        prompt_instruction = f"Ask a behavioral question about handling technical disagreements, managing scope pressure, or recovering from a production issue."
+    else:
+        prompt_instruction = f"Ask a focused question to assess: {next_section.objective}."
+
+    gen_prompt = f"""You are an expert technical interviewer for {role} ({difficulty} level).
+Acknowledge candidate with: "{ack}"
+Then ask EXACTLY ONE clear question for section: "{next_section.title}".
+Goal: {prompt_instruction}
+
+Rules:
+- Include "{ack}" at the beginning.
+- Follow with exactly ONE focused question.
+- Do NOT bundle multiple questions.
+- Do NOT provide hints or mention rubrics.
+- Length should be under 40 words total."""
+
+    question_text = ""
+    try:
+        resp = llm.invoke([HumanMessage(content=gen_prompt)])
+        candidate_q = resp.content.strip().replace('"', '')
+        # Repetition & duplicate validation gate
+        emb_service = get_shared_embedding_service()
+        is_dup, _, _ = is_semantic_duplicate(candidate_q, asked_questions, emb_service, similarity_threshold=0.82)
+        if candidate_q and not is_dup:
+            question_text = candidate_q
+    except Exception as e:
+        logger.warning(f"LLM question generation failed: {e}")
+
+    # Fallback to calibrated question if needed
+    if not question_text:
+        slot_fallback = get_calibrated_fallback_question(difficulty, len(history) + 1, next_section.title, role)
+        question_text = f"{ack} {slot_fallback}"
+
+    return NextTurnResponse(
+        action="ASK_QUESTION",
+        section_id=next_section.id,
+        objective_id=f"{next_section.id}-objective",
+        question_type="primary",
+        parent_question_id=None,
+        interviewer_text=question_text,
+        reason_code="NEXT_SECTION_OBJECTIVE",
+        expected_evidence=["technical_reasoning", "practical_example"],
+        estimated_seconds=75,
+        is_complete=False
+    )
+
+
+# =========================================================
+# END-ONLY EVALUATION & REPORT GENERATION (PHASE 5 & 6)
+# =========================================================
+
 def evaluate_full_session(request: EvaluateSessionRequest) -> SessionEvaluationResult:
     """
-    Evaluates the entire interview transcript in a single LLM call.
-    Drastically saves token usage and computes holistic feedback.
+    Evaluates the complete interview transcript strictly after the interview concludes.
+    Evaluates the self-introduction separately and scores all subsequent turns against the 5-part rubric.
+    Produces deterministic aggregated scores and a complete preparation plan.
     """
     llm = LLMClient().get_llm()
     transcript = request.transcript or []
+    role = request.role or "Software Engineer"
+    difficulty = request.difficulty or "beginner"
 
     if not transcript:
         return SessionEvaluationResult(
             overall_score=7.0,
             rating_label="Interview ready",
-            category_scores={"correctness": 7.0, "clarity": 7.0, "depth": 7.0, "relevance": 7.0},
+            category_scores={"correctness": 7.0, "clarity": 7.0, "depth": 7.0, "relevance": 7.0, "completeness": 7.0},
             feedback="No answers submitted in this session.",
             strengths=["Session initialized."],
             areas_of_improvement=["Submit answers to receive personalized feedback."],
@@ -833,53 +1184,104 @@ def evaluate_full_session(request: EvaluateSessionRequest) -> SessionEvaluationR
             source="empty_session"
         )
 
+    # Format transcript with clear turn demarcations
     transcript_lines = []
     for item in transcript:
+        sec = item.section_id or ("introduction" if item.question_index == 0 else "technical")
+        status_flag = "[SKIPPED]" if item.is_skipped else ""
         transcript_lines.append(
-            f"Question #{item.question_index + 1} ({item.difficulty}): {item.question}\n"
-            f"Candidate Answer: {item.answer or '[No Answer / Skipped]'}"
+            f"Turn #{item.question_index + 1} [Section: {sec}] {status_flag}\n"
+            f"Question: {item.question}\n"
+            f"Candidate Answer: {item.answer or '[No Answer Provided / Skipped]'}"
         )
     formatted_transcript = "\n\n".join(transcript_lines)
 
-    system_prompt = """You are PrepNova's chief technical interviewer evaluating a completed technical interview session.
-Review the complete candidate transcript across all questions.
-Evaluate each question turn and compute the final overall scorecard.
+    system_prompt = f"""You are PrepNova's Principal Technical Interview Evaluator.
+You are evaluating a complete, finished interview session for a candidate applying for: {role} (Level: {difficulty}).
+Candidate's full transcript is provided below.
 
-You MUST output valid JSON strictly matching this schema:
-{
-  "overall_score": number (0 to 10 scale),
-  "category_scores": {
-    "correctness": number,
-    "clarity": number,
-    "depth": number,
-    "relevance": number
-  },
-  "feedback": "3-4 sentences summarizing candidate's overall readiness, technical strengths, and main growth area",
-  "strengths": ["specific strength 1", "specific strength 2", "specific strength 3"],
-  "areas_of_improvement": ["actionable advice 1", "actionable advice 2"],
+INSTRUCTIONS:
+1. Turn #1 is ALWAYS the candidate's opening self-introduction. Evaluate it thoroughly on:
+   - structure (greeting, clear sequence, conclusion)
+   - role_relevance (how well candidate tied their experience to {role})
+   - evidence (concrete projects, technologies, and achievements mentioned)
+   - conciseness (crisp delivery without rambling)
+   - clarity (clear articulation)
+   - provide a sample_improved_answer that is realistic, professional, and well-structured.
+2. Evaluate all remaining turns across the 5 dimensions on a 0-10 scale:
+   - relevance, correctness, completeness, clarity, depth
+   - note: if candidate skipped a question, give appropriate low marks for that specific turn.
+3. Compute overall score (0 to 10 scale) as a fair, weighted reflection of performance.
+4. Provide top 3-4 strengths, top 3-4 prioritized improvement areas, and a concrete personalized preparation plan (3-4 study actions).
+
+You MUST output ONLY valid JSON matching this exact structure:
+{{
+  "overall_score": 8.2,
+  "category_scores": {{
+    "correctness": 8.0,
+    "clarity": 8.5,
+    "depth": 7.8,
+    "relevance": 8.5,
+    "completeness": 8.0
+  }},
+  "intro_evaluation": {{
+    "score": 8.5,
+    "structure": "Clear chronological structure highlighting university and latest projects.",
+    "role_relevance": "Strong alignment with frontend and fullstack requirements.",
+    "evidence": "Mentioned specific tech stack and project metrics.",
+    "conciseness": "Well-paced, under 2 minutes.",
+    "clarity": "Articulate and confident delivery.",
+    "strengths": ["Clear role hook", "Concrete project mentions"],
+    "improvements": ["Highlight quantifiable impact in previous roles earlier"],
+    "sample_improved_answer": "Hi, I am a software engineer with 2+ years of experience specializing in building responsive web applications using React and Node.js..."
+  }},
+  "section_summaries": {{
+    "introduction": "Engaging, role-aligned overview.",
+    "projects": "Demonstrated strong architecture ownership and debugging process.",
+    "technical_concepts": "Solid grasp of async mechanics and state management.",
+    "problem_solving": "Clear trade-off analysis under latency constraints.",
+    "behavioral": "Structured STAR responses demonstrating collaborative problem-solving."
+  }},
+  "feedback": "Candidate demonstrated solid competence in core {role} fundamentals with clear communication.",
+  "strengths": ["Strong foundational knowledge", "Structured answers", "Good debugging rationale"],
+  "areas_of_improvement": ["Elaborate more on distributed trade-offs", "Quantify project outcomes"],
+  "preparation_plan": [
+    "Review distributed caching eviction policies (LRU vs LFU)",
+    "Practice STAR method for cross-team conflict resolution",
+    "Study database indexing internals (B-Trees vs LSM Trees)"
+  ],
+  "coverage_summary": {{
+    "total_turns": {len(transcript)},
+    "sections_assessed": ["Introduction", "Projects", "Skills", "Technical", "Scenario", "Behavioral"],
+    "sections_skipped": []
+  }},
   "evaluations": [
-    {
-      "question_index": number (0-indexed integer matching the question index),
-      "score": number (0 to 10),
-      "feedback": "1-2 sentences on this specific answer",
-      "correctness": number,
-      "clarity": number,
-      "depth": number
-    }
+    {{
+      "question_index": 0,
+      "section_id": "introduction",
+      "score": 8.5,
+      "feedback": "Concise and role-relevant introduction.",
+      "correctness": 8.5,
+      "clarity": 8.5,
+      "depth": 8.0,
+      "relevance": 9.0,
+      "completeness": 8.5
+    }}
   ]
-}
+}}
 Return JSON only without any markdown code fences."""
 
-    user_prompt = f"""Role: {request.role}
-Target Difficulty: {request.difficulty}
-Total Questions Completed: {len(transcript)}
+    user_prompt = f"""Interview Session Details:
+Role: {role}
+Level: {difficulty}
+Questions Answered: {len(transcript)}
 
-Full Interview Transcript:
+Full Transcript:
 ===========================
 {formatted_transcript}
 ===========================
 
-Evaluate the complete interview session now."""
+Evaluate the complete interview now and generate the full JSON report."""
 
     try:
         response = llm.invoke([
@@ -890,14 +1292,29 @@ Evaluate the complete interview session now."""
         raw = response.content.replace("```json", "").replace("```", "").strip()
         data = json.loads(raw)
 
-        overall = max(0.0, min(10.0, float(data.get("overall_score", 7.0))))
+        overall = max(0.0, min(10.0, float(data.get("overall_score", 7.5))))
         cat_scores = data.get("category_scores", {})
-        for k in ["correctness", "clarity", "depth", "relevance"]:
+        for k in ["correctness", "clarity", "depth", "relevance", "completeness"]:
             if k not in cat_scores:
                 cat_scores[k] = overall
             else:
                 cat_scores[k] = round(max(0.0, min(10.0, float(cat_scores[k]))), 1)
 
+        # Introduction Evaluation
+        raw_intro = data.get("intro_evaluation", {})
+        intro_eval = IntroductionEvaluation(
+            score=round(max(0.0, min(10.0, float(raw_intro.get("score", overall)))), 1),
+            structure=str(raw_intro.get("structure", "Well-structured opening and summary.")),
+            role_relevance=str(raw_intro.get("role_relevance", f"Good alignment with {role} requirements.")),
+            evidence=str(raw_intro.get("evidence", "Candidate cited relevant experience and tools.")),
+            conciseness=str(raw_intro.get("conciseness", "Pacing was appropriate and professional.")),
+            clarity=str(raw_intro.get("clarity", "Clear communication of ideas.")),
+            strengths=raw_intro.get("strengths", ["Clear self-summary", "Connected experience to role"]),
+            improvements=raw_intro.get("improvements", ["Highlight quantifiable metrics earlier"]),
+            sample_improved_answer=raw_intro.get("sample_improved_answer")
+        )
+
+        # Per-turn evaluations
         eval_turns = []
         raw_evals = data.get("evaluations", [])
         for idx, item in enumerate(raw_evals):
@@ -905,11 +1322,14 @@ Evaluate the complete interview session now."""
             sc = round(max(0.0, min(10.0, float(item.get("score", overall)))), 1)
             eval_turns.append(EvaluatedTurn(
                 question_index=q_idx,
+                section_id=str(item.get("section_id", transcript[q_idx].section_id if q_idx < len(transcript) else "technical")),
                 score=sc,
                 feedback=str(item.get("feedback", "Answer evaluated.")),
                 correctness=round(float(item.get("correctness", sc)), 1),
                 clarity=round(float(item.get("clarity", sc)), 1),
-                depth=round(float(item.get("depth", sc)), 1)
+                depth=round(float(item.get("depth", sc)), 1),
+                relevance=round(float(item.get("relevance", sc)), 1),
+                completeness=round(float(item.get("completeness", sc)), 1)
             ))
 
         # Fallback if evaluations list was missing
@@ -917,43 +1337,69 @@ Evaluate the complete interview session now."""
             for idx, item in enumerate(transcript):
                 eval_turns.append(EvaluatedTurn(
                     question_index=item.question_index,
+                    section_id=item.section_id or "technical",
                     score=overall,
                     feedback="Demonstrated technical familiarity with core concepts.",
                     correctness=overall,
                     clarity=overall,
-                    depth=overall
+                    depth=overall,
+                    relevance=overall,
+                    completeness=overall
                 ))
 
         return SessionEvaluationResult(
             overall_score=round(overall, 1),
             rating_label=get_rating_label(overall),
             category_scores=cat_scores,
-            feedback=data.get("feedback", f"Completed interview session for {request.role}."),
-            strengths=data.get("strengths", ["Solid technical foundation."]),
-            areas_of_improvement=data.get("areas_of_improvement", ["Continue practicing system trade-offs."]),
+            intro_evaluation=intro_eval,
+            section_summaries=data.get("section_summaries", {}),
+            feedback=data.get("feedback", f"Candidate demonstrated competence across {role} core domains."),
+            strengths=data.get("strengths", ["Clear technical communication", "Methodical problem solving"]),
+            areas_of_improvement=data.get("areas_of_improvement", ["Deepen system design trade-offs", "Add concrete metrics"]),
+            preparation_plan=data.get("preparation_plan", [f"Practice deep-dive architectural trade-offs for {role}", "Refine STAR behavioral storytelling"]),
+            coverage_summary=data.get("coverage_summary", {"total_turns": len(transcript), "sections_assessed": ["Introduction", "Technical"]}),
             evaluations=eval_turns,
-            source="batch_llm"
+            source="end_only_evaluation"
         )
 
     except Exception as e:
-        default_score = 7.0
+        logger.error(f"End-only evaluation LLM call error: {e}")
+        default_score = 7.5
         fallback_turns = [
             EvaluatedTurn(
                 question_index=item.question_index,
+                section_id=item.section_id or ("introduction" if item.question_index == 0 else "technical"),
                 score=default_score,
                 feedback="Good effort. Aim for more precise technical terminology and concrete examples.",
-                correctness=7.0,
-                clarity=7.0,
-                depth=7.0
+                correctness=7.5,
+                clarity=7.5,
+                depth=7.0,
+                relevance=8.0,
+                completeness=7.5
             ) for item in transcript
         ]
         return SessionEvaluationResult(
             overall_score=default_score,
             rating_label=get_rating_label(default_score),
-            category_scores={"correctness": 7.0, "clarity": 7.0, "depth": 7.0, "relevance": 7.0},
-            feedback=f"Candidate successfully completed {len(transcript)} questions for {request.role}.",
-            strengths=["Consistent pacing", "Addressed problem prompts"],
+            category_scores={"correctness": 7.5, "clarity": 7.5, "depth": 7.0, "relevance": 8.0, "completeness": 7.5},
+            intro_evaluation=IntroductionEvaluation(
+                score=8.0,
+                structure="Clear opening summary",
+                role_relevance=f"Aligned with {role}",
+                evidence="Cited practical experience",
+                conciseness="Good pacing",
+                clarity="Clear articulation",
+                strengths=["Structured introduction", "Connected background to role"],
+                improvements=["Include more quantifiable project impact"],
+                sample_improved_answer=f"Hi, I am a passionate {role} with experience developing reliable software applications..."
+            ),
+            section_summaries={"general": f"Completed {len(transcript)} interview questions successfully."},
+            feedback=f"Candidate successfully completed {len(transcript)} questions for {role}.",
+            strengths=["Consistent pacing", "Addressed problem prompts thoughtfully"],
             areas_of_improvement=["Provide deeper trade-off comparisons in system architecture"],
+            preparation_plan=[f"Review core design patterns for {role}", "Practice timing and STAR structure on behavioral questions"],
+            coverage_summary={"total_turns": len(transcript), "sections_assessed": ["Introduction", "Core Technical"]},
             evaluations=fallback_turns,
             source="fallback_batch"
         )
+

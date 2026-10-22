@@ -12,13 +12,16 @@ import {
   LayoutDashboard, 
   ShieldCheck, 
   BookOpen, 
-  Check, 
   Target,
   AlertTriangle,
-  FileText
+  FileText,
+  UserCheck,
+  RefreshCw,
+  Loader2,
+  Check
 } from 'lucide-react';
 import WorkspaceLayout from '../components/layout/WorkspaceLayout';
-import { getInterviewReportApi, getStoredToken } from '../lib/api';
+import { getInterviewReportApi, retryInterviewReportApi, getStoredToken } from '../lib/api';
 
 export default function ResultsPage() {
   const navigate = useNavigate();
@@ -30,29 +33,47 @@ export default function ResultsPage() {
   
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(Boolean(sessionId));
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState(null);
+
+  const loadReport = async () => {
+    if (!sessionId || sessionId === 'session-completed') {
+      setLoading(false);
+      return;
+    }
+    try {
+      const res = await getInterviewReportApi(sessionId);
+      if (res.session) {
+        setReport(res.session);
+      }
+    } catch (err) {
+      console.warn("Could not fetch remote interview report:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     let isMounted = true;
-    async function loadReport() {
-      if (!sessionId || sessionId === 'session-completed') {
-        setLoading(false);
-        return;
-      }
-      try {
-        const res = await getInterviewReportApi(sessionId);
-        if (isMounted && res.session) {
-          setReport(res.session);
-        }
-      } catch (err) {
-        console.warn("Could not fetch remote interview report:", err);
-      } finally {
-        if (isMounted) setLoading(false);
-      }
-    }
-
     loadReport();
     return () => { isMounted = false; };
   }, [sessionId]);
+
+  const handleRetryEvaluation = async () => {
+    if (!sessionId) return;
+    setRetrying(true);
+    setRetryError(null);
+    try {
+      const res = await retryInterviewReportApi(sessionId);
+      if (res.finalReport || res.report) {
+        await loadReport();
+      }
+    } catch (err) {
+      setRetryError(err.message || 'Evaluation retry failed. Please try again.');
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   const role = report?.targetRole || stateData.role || localStorage.getItem('prepnova_role') || 'Software Engineer';
   const difficulty = report?.difficultyLevel || stateData.difficulty || localStorage.getItem('prepnova_difficulty') || 'Intermediate';
@@ -70,6 +91,15 @@ export default function ResultsPage() {
     clarity: 8.0,
     depth: 7.8
   };
+
+  const introEvaluation = report?.introEvaluation || null;
+  const preparationPlan = report?.preparationPlan?.length ? report.preparationPlan : [
+    `Practice articulating architectural trade-offs using quantifiable metrics for ${role}.`,
+    'Structure problem-solving responses using the Definition -> Mechanism -> Trade-off pattern.',
+    'Review edge cases, error boundary patterns, and recovery mechanisms.'
+  ];
+
+  const sectionSummaries = report?.sectionSummaries || {};
 
   const strengths = report?.strengths?.length ? report.strengths : [
     'Accurately identified core technical definitions and architectural primitives.',
@@ -120,12 +150,17 @@ Role: ${role}
 Difficulty: ${difficulty}
 Overall Score: ${overallScore}% (${getRatingLabel(overallScore)})
 Duration: ${durationText}
-Questions Answered: ${questionsCount}/${totalQuestions}
+Questions Completed: ${questionsCount}/${totalQuestions}
 
 Category Scores:
 - Correctness: ${Math.round((categoryScores.correctness || 8) * 10)}%
 - Clarity: ${Math.round((categoryScores.clarity || 8) * 10)}%
 - Technical Depth: ${Math.round((categoryScores.depth || 8) * 10)}%
+- Relevance: ${Math.round((categoryScores.relevance || 8) * 10)}%
+- Completeness: ${Math.round((categoryScores.completeness || 8) * 10)}%
+
+Preparation Plan:
+${preparationPlan.map((p, i) => `${i + 1}. ${p}`).join('\n')}
 `;
     const blob = new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
@@ -138,11 +173,55 @@ Category Scores:
     URL.revokeObjectURL(url);
   };
 
+  const isEvaluationFailed = report?.reportStatus === 'failed' || report?.status === 'evaluation_failed';
+  const isEvaluating = report?.reportStatus === 'running' || report?.status === 'evaluating';
 
   return (
     <WorkspaceLayout title="Interview Scorecard">
       <div className="max-w-4xl mx-auto space-y-7">
         
+        {/* If report is still processing or failed */}
+        {isEvaluating && (
+          <div className="p-4 rounded-2xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-900/60 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <Loader2 className="w-5 h-5 text-indigo-600 animate-spin shrink-0" />
+              <div>
+                <h4 className="text-sm font-bold text-slate-900 dark:text-white">Generating Complete Report</h4>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Your transcript has been saved. The AI engine is evaluating your answers.</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={loadReport}
+              className="btn-secondary text-xs px-3 py-1.5"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Refresh</span>
+            </button>
+          </div>
+        )}
+
+        {isEvaluationFailed && (
+          <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
+              <div>
+                <h4 className="text-sm font-bold text-slate-900 dark:text-white">Report Generation Pending</h4>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Your interview transcript is safely preserved. Click below to retry generating your report.</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              disabled={retrying}
+              onClick={handleRetryEvaluation}
+              className="btn-primary text-xs px-3 py-1.5 bg-amber-600 hover:bg-amber-700"
+            >
+              {retrying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+              <span>{retrying ? 'Evaluating...' : 'Retry Report'}</span>
+            </button>
+          </div>
+        )}
+
         {/* Top Summary Card */}
         <div className="panel-card bg-gradient-to-br from-slate-900 via-[#0B132B] to-indigo-950 text-white border-slate-800 p-6 sm:p-8">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
@@ -171,10 +250,51 @@ Category Scores:
           </div>
         </div>
 
-        {/* Category Breakdown Metrics */}
+        {/* Candidate Opening Self-Introduction Review */}
+        {introEvaluation && (
+          <div className="panel-card space-y-4 border-indigo-200/80 dark:border-indigo-900/50">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-indigo-100 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
+                  <UserCheck className="w-4 h-4" />
+                </div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  Opening Self-Introduction Assessment
+                </h3>
+              </div>
+              <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800">
+                Score: {Math.round(introEvaluation.score * 10)}%
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800">
+                <span className="font-bold text-slate-500 uppercase tracking-wider block mb-1">Structure & Pacing</span>
+                <p className="text-slate-700 dark:text-slate-300">{introEvaluation.structure}</p>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800">
+                <span className="font-bold text-slate-500 uppercase tracking-wider block mb-1">Role Relevance</span>
+                <p className="text-slate-700 dark:text-slate-300">{introEvaluation.role_relevance || introEvaluation.roleRelevance}</p>
+              </div>
+            </div>
+
+            {introEvaluation.sample_improved_answer && (
+              <div className="p-4 rounded-xl bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/40 text-xs space-y-1.5">
+                <span className="font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider block">
+                  Exemplar Improved Structure
+                </span>
+                <p className="text-slate-700 dark:text-slate-300 italic leading-relaxed">
+                  "{introEvaluation.sample_improved_answer}"
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 5-Category Breakdown Metrics */}
         <div className="panel-card space-y-5">
           <h3 className="text-base font-bold text-slate-900 dark:text-white">
-            Rubric Category Breakdown
+            5-Dimension Rubric Evaluation
           </h3>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -185,7 +305,7 @@ Category Scores:
                   {Math.round((categoryScores.correctness || 8.5) * 10)}%
                 </span>
                 <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-                  {categoryScores.correctness >= 7 ? 'Passing' : 'Review Needed'}
+                  {categoryScores.correctness >= 7 ? 'Accurate' : 'Review Needed'}
                 </span>
               </div>
               <div className="w-full bg-slate-200 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
@@ -221,7 +341,7 @@ Category Scores:
                   {Math.round((categoryScores.depth || 7.8) * 10)}%
                 </span>
                 <span className="text-xs font-semibold text-blue-600 dark:text-blue-400">
-                  {categoryScores.depth >= 7 ? 'Detailed' : 'Add Tradeoffs'}
+                  {categoryScores.depth >= 7 ? 'Detailed' : 'Add Trade-offs'}
                 </span>
               </div>
               <div className="w-full bg-slate-200 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
@@ -239,7 +359,7 @@ Category Scores:
           <div className="panel-card space-y-3">
             <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 font-bold text-sm">
               <CheckCircle2 className="w-4 h-4" />
-              <span>Key Strengths</span>
+              <span>Key Strengths Observed</span>
             </div>
             <ul className="space-y-2 text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
               {strengths.map((str, idx) => (
@@ -267,6 +387,26 @@ Category Scores:
           </div>
         </div>
 
+        {/* Personalized Preparation Action Plan */}
+        <div className="panel-card space-y-4">
+          <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400 font-bold text-sm">
+            <Target className="w-4 h-4" />
+            <span>Targeted Preparation Action Plan</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+            {preparationPlan.map((item, idx) => (
+              <div 
+                key={idx}
+                className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 flex items-start gap-3"
+              >
+                <span className="w-5 h-5 rounded-full bg-indigo-100 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">
+                  {idx + 1}
+                </span>
+                <span className="text-slate-700 dark:text-slate-300 leading-relaxed">{item}</span>
+              </div>
+            ))}
+          </div>
+        </div>
 
         {/* Action Row */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2">

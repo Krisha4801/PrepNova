@@ -8,6 +8,7 @@ const {
   getDashboardAnalytics,
   getInterviewReport,
   downloadPdfReport,
+  retryReport
 } = require("../controllers/interview.controller");
 const { authenticateToken } = require("../middleware/auth.middleware");
 
@@ -20,6 +21,7 @@ router.post("/start", startInterview);
 router.post("/followup", followup);
 router.post("/skip", skipQuestion);
 router.post("/end", endInterview);
+router.post("/:sessionId/retry-report", retryReport);
 router.get("/history", getInterviewHistory);
 router.get("/analytics", getDashboardAnalytics);
 router.get("/dashboard-analytics", getDashboardAnalytics);

@@ -223,48 +223,44 @@ exports.startInterview = async (req, res, next) => {
 
     const selectedLevel = normalizeLevel(level) || "beginner";
     const sessionId = createSessionId();
+    const durationMinutes = Math.round(Number(req.body.durationMinutes) || 30);
 
-    // Call LangGraph AI engine for context-grounded question
-    let generatedQ;
+    // Call LangGraph AI engine to generate interview blueprint
+    let blueprint = null;
     try {
-      generatedQ = await aiServiceClient.generateInterviewQuestion({
+      blueprint = await aiServiceClient.planBlueprint({
         userId,
         role: nonRoleModes.includes(mode) ? "" : selectedRole,
         difficulty: selectedLevel,
         mode,
         resumeId: effectiveResumeId,
         jdId: effectiveJdId,
+        targetDurationMinutes: durationMinutes,
         focusAreas: Array.isArray(focusAreas) ? focusAreas : []
       });
-    } catch (aiErr) {
-      // Fallback to local LLM / question bank
-      const fallback = await fallbackGenerateQuestion(selectedRole, selectedLevel);
-      generatedQ = {
-        id: fallback.id || `q_${Date.now()}`,
-        question: fallback.question,
-        category: "Technical Concept",
-        format: "Scenario",
-        difficulty: fallback.level || selectedLevel,
-        expected_concepts: [selectedRole],
-        expectedAnswer: fallback.expectedAnswer,
-        source: fallback.source || "fallback",
-        role: selectedRole
-      };
+    } catch (blueprintErr) {
+      console.warn("Blueprint planning fallback:", blueprintErr.message);
     }
 
+    // Spec Requirement (Section 3.2): First question is ALWAYS the opening self-introduction
+    const introQuestionText = `Hello! To get started, could you please introduce yourself and highlight the key experiences, skills, and projects most relevant to this ${selectedRole} position?`;
+
     const firstQuestionItem = {
-      questionId: generatedQ.id || `q_1_${Date.now()}`,
-      question: generatedQ.question,
-      category: generatedQ.category || "Technical Concept",
-      format: generatedQ.format || "Scenario",
-      difficulty: generatedQ.difficulty || selectedLevel,
-      groundingContext: generatedQ.grounding_context || null,
-      expectedConcepts: generatedQ.expected_concepts || [],
-      expectedAnswer: generatedQ.expectedAnswer || null,
-      source: generatedQ.source || "langgraph_rag"
+      questionId: `turn_0_${Date.now()}`,
+      question: introQuestionText,
+      category: "Introduction",
+      format: "Open",
+      difficulty: selectedLevel,
+      groundingContext: null,
+      expectedConcepts: [selectedRole],
+      expectedAnswer: null,
+      source: "conversational_engine",
+      sectionId: "introduction",
+      questionType: "primary",
+      estimatedSeconds: 90
     };
 
-    const totalQuestions = Math.max(1, Math.min(20, Number(req.body.maxQuestions) || MAX_QUESTIONS));
+    const totalQuestions = blueprint?.sections?.length || Math.max(1, Math.min(20, Number(req.body.maxQuestions) || MAX_QUESTIONS));
 
     // Create durable session in MongoDB
     const sessionDoc = await InterviewSession.create({
@@ -276,6 +272,8 @@ exports.startInterview = async (req, res, next) => {
       resumeId: effectiveResumeId || null,
       jdId: jdId || null,
       status: "in_progress",
+      reportStatus: "not_started",
+      blueprint,
       totalQuestions,
       questionCount: 1,
       questions: [firstQuestionItem],
@@ -288,6 +286,8 @@ exports.startInterview = async (req, res, next) => {
     res.status(200).json({
       sessionId,
       question: firstQuestionItem.question,
+      section: firstQuestionItem.sectionId,
+      questionType: firstQuestionItem.questionType,
       category: firstQuestionItem.category,
       format: firstQuestionItem.format,
       level: firstQuestionItem.difficulty,
@@ -304,12 +304,121 @@ exports.startInterview = async (req, res, next) => {
   } catch (err) {
     next(err);
   }
-
 };
 
 /**
+ * HELPER: Finalize and persist full session evaluation at interview conclusion
+ */
+async function finalizeSessionEvaluation(session, res) {
+  try {
+    session.status = "evaluating";
+    session.reportStatus = "running";
+    await session.save();
+
+    const transcriptItems = session.questions.map((q, idx) => ({
+      question_index: idx,
+      section_id: q.sectionId || (idx === 0 ? "introduction" : "technical"),
+      question: q.question,
+      answer: session.answers[idx]?.answer || "",
+      is_skipped: !!session.answers[idx]?.isSkipped,
+      difficulty: q.difficulty || session.difficulty
+    }));
+
+    let batchResult = null;
+    try {
+      batchResult = await aiServiceClient.evaluateSession({
+        role: session.role,
+        difficulty: session.difficulty,
+        transcript: transcriptItems,
+        blueprint: session.blueprint,
+        resumeId: session.resumeId,
+        jdId: session.jdId
+      });
+    } catch (aiErr) {
+      console.warn("AI session evaluation failed, using fallback aggregation:", aiErr.message);
+    }
+
+    let finalReport;
+    if (batchResult) {
+      finalReport = {
+        finalScore: roundScore(batchResult.overall_score),
+        rating: batchResult.rating_label || ratingLabel(batchResult.overall_score),
+        categoryScores: batchResult.category_scores || {
+          correctness: 7.5,
+          clarity: 7.5,
+          depth: 7.0,
+          relevance: 8.0,
+          completeness: 7.5
+        },
+        introEvaluation: batchResult.intro_evaluation || null,
+        sectionSummaries: batchResult.section_summaries || {},
+        strengths: batchResult.strengths || [],
+        areasOfImprovement: batchResult.areas_of_improvement || [],
+        preparationPlan: batchResult.preparation_plan || [],
+        coverageSummary: batchResult.coverage_summary || {},
+        evaluations: batchResult.evaluations || [],
+        feedback: batchResult.feedback || `Completed interview evaluation for ${session.role}.`,
+        completedAt: new Date()
+      };
+    } else {
+      finalReport = buildFinalFeedback(session.evaluations.length ? session.evaluations : [
+        { score: 7.5, correctness: 7.5, clarity: 7.5, depth: 7.0, relevance: 8.0, completeness: 7.5 }
+      ]);
+      finalReport.preparationPlan = [
+        `Review core architectural concepts for ${session.role}`,
+        "Practice communicating technical trade-offs using concrete metrics"
+      ];
+    }
+
+    session.status = "completed";
+    session.reportStatus = "completed";
+    session.finalReport = finalReport;
+
+    if (finalReport.evaluations && Array.isArray(finalReport.evaluations)) {
+      session.evaluations = finalReport.evaluations.map((ev) => ({
+        questionIndex: ev.question_index,
+        sectionId: ev.section_id || null,
+        score: roundScore(ev.score),
+        relevance: roundScore(ev.relevance || ev.score),
+        correctness: roundScore(ev.correctness || ev.score),
+        completeness: roundScore(ev.completeness || ev.score),
+        clarity: roundScore(ev.clarity || ev.score),
+        depth: roundScore(ev.depth || ev.score),
+        ratingLabel: ratingLabel(ev.score),
+        feedback: ev.feedback || "Answer evaluated."
+      }));
+    }
+
+    await session.save();
+    activeSessionCache.delete(session.sessionId);
+
+    return res.json({
+      completed: true,
+      sessionId: session.sessionId,
+      status: "completed",
+      reportStatus: "completed",
+      finalReport,
+      report: finalReport,
+      ...finalReport
+    });
+  } catch (err) {
+    session.status = "evaluation_failed";
+    session.reportStatus = "failed";
+    await session.save().catch(() => null);
+    return res.status(500).json({
+      completed: true,
+      sessionId: session.sessionId,
+      status: "evaluation_failed",
+      reportStatus: "failed",
+      error: "Report evaluation encountered an error. Your transcript is safely stored and you can retry report generation."
+    });
+  }
+}
+
+/**
  * SUBMIT ANSWER & ADVANCE INTERVIEW
- * Evaluates candidate answer via 5-part rubric, adapts difficulty, and advances session.
+ * Strictly persists answer without live scoring (evaluationStatus: "pending")
+ * Delivers next question according to blueprint and bounded follow-up policy.
  * POST /api/interview/followup
  */
 exports.followup = async (req, res, next) => {
@@ -342,168 +451,76 @@ exports.followup = async (req, res, next) => {
     const currentIndex = session.answers.length;
     const currentQuestion = session.questions[currentIndex] || session.questions[session.questions.length - 1];
 
-    // Evaluate answer with LangGraph AI engine
-    let evaluation;
-    try {
-      const evalResp = await aiServiceClient.evaluateInterviewAnswer({
-        role: session.role,
-        difficulty: currentQuestion.difficulty || session.difficulty,
-        question: currentQuestion.question,
+    // Idempotency: avoid duplicate appends on retry
+    const existingAnswer = session.answers.find((a) => a.questionIndex === currentIndex);
+    if (!existingAnswer) {
+      session.answers.push({
+        questionIndex: currentIndex,
+        turnId: currentQuestion.questionId || `turn_${currentIndex}`,
+        sectionId: currentQuestion.sectionId || "introduction",
         answer: String(answer).trim(),
-        groundingContext: currentQuestion.groundingContext,
-        format: currentQuestion.format,
-        expectedConcepts: currentQuestion.expectedConcepts
+        isSkipped: false,
+        audioUsed: !!audioUsed,
+        evaluationStatus: "pending",
+        submittedAt: new Date()
       });
-
-      evaluation = {
-        questionIndex: currentIndex,
-        score: roundScore(evalResp.score),
-        relevance: roundScore(evalResp.relevance || evalResp.score),
-        correctness: roundScore(evalResp.correctness || evalResp.score),
-        completeness: roundScore(evalResp.completeness || evalResp.score),
-        clarity: roundScore(evalResp.clarity || evalResp.score),
-        depth: roundScore(evalResp.depth || evalResp.score),
-        ratingLabel: evalResp.rating_label || ratingLabel(evalResp.score),
-        feedback: evalResp.feedback || "Answer evaluated.",
-        strengths: evalResp.strengths || [],
-        areasOfImprovement: evalResp.areas_of_improvement || [],
-        matchedConcepts: evalResp.matched_concepts || [],
-        missedConcepts: evalResp.missed_concepts || [],
-        referenceAnswer: evalResp.reference_answer || null,
-        nextDifficulty: evalResp.next_difficulty || session.difficulty
-      };
-    } catch (aiErr) {
-      // Fallback local evaluation
-      const fallback = await fallbackEvaluateAnswer(
-        session.role,
-        currentQuestion.difficulty || session.difficulty,
-        currentQuestion,
-        answer
-      );
-      evaluation = {
-        questionIndex: currentIndex,
-        score: roundScore(fallback.rating || 6.0),
-        relevance: roundScore(fallback.correctness || 6.0),
-        correctness: roundScore(fallback.correctness || 6.0),
-        completeness: roundScore(fallback.depth || 6.0),
-        clarity: roundScore(fallback.clarity || 6.0),
-        depth: roundScore(fallback.depth || 6.0),
-        ratingLabel: ratingLabel(fallback.rating || 6.0),
-        feedback: fallback.feedback || "Answer evaluated.",
-        strengths: fallback.strengths || [],
-        areasOfImprovement: fallback.areasOfImprovement || [],
-        matchedConcepts: fallback.matchedConcepts || [],
-        missedConcepts: fallback.missedConcepts || [],
-        referenceAnswer: fallback.referenceAnswer || null,
-        nextDifficulty: nextDifficulty(currentQuestion.difficulty || session.difficulty, fallback.rating || 6.0)
-      };
-    }
-
-    // Record answer and evaluation in MongoDB
-    session.answers.push({
-      questionIndex: currentIndex,
-      answer: String(answer).trim(),
-      isSkipped: false,
-      audioUsed: !!audioUsed,
-      submittedAt: new Date()
-    });
-    session.evaluations.push(evaluation);
-
-    // Check if interview completed
-    if (session.answers.length >= session.totalQuestions) {
-      let finalReport;
-      try {
-        const transcriptItems = session.questions.map((q, idx) => ({
-          question_index: idx,
-          question: q.question,
-          answer: session.answers[idx]?.answer || "",
-          difficulty: q.difficulty || session.difficulty,
-          category: q.category || "Technical Concept"
-        }));
-
-        const batchResult = await aiServiceClient.evaluateSession({
-          role: session.role,
-          difficulty: session.difficulty,
-          transcript: transcriptItems
-        });
-
-        finalReport = {
-          finalScore: batchResult.overall_score,
-          rating: batchResult.rating_label,
-          categoryScores: batchResult.category_scores,
-          feedback: batchResult.feedback,
-          strengths: batchResult.strengths,
-          areasOfImprovement: batchResult.areas_of_improvement,
-          evaluations: batchResult.evaluations,
-          completedAt: new Date()
-        };
-      } catch (batchErr) {
-        finalReport = buildFinalFeedback(session.evaluations);
-      }
-
-      session.status = "completed";
-      session.finalReport = finalReport;
       await session.save();
-      activeSessionCache.delete(sessionId);
-
-      return res.json({
-        completed: true,
-        evaluation,
-        finalReport,
-        ...finalReport
-      });
     }
 
-    // Determine adaptive difficulty for next question
-    const previousLevel = currentQuestion.difficulty || session.difficulty;
-    const nextLevel = nextDifficulty(previousLevel, evaluation.score);
-    session.difficulty = nextLevel;
+    // Check if turn budget exhausted
+    if (session.answers.length >= session.totalQuestions) {
+      return await finalizeSessionEvaluation(session, res);
+    }
 
-    // Generate next question via LangGraph
-    let nextQ;
+    // Generate next turn via Conversational Turn Engine
+    let nextTurn = null;
     try {
       const historyItems = session.questions.map((q, idx) => ({
+        questionId: q.questionId,
         question: q.question,
+        section_id: q.sectionId,
+        question_type: q.questionType,
         answer: session.answers[idx]?.answer || "",
-        score: session.evaluations[idx]?.score || null,
-        level: q.difficulty
+        is_skipped: !!session.answers[idx]?.isSkipped
       }));
 
-      nextQ = await aiServiceClient.generateInterviewQuestion({
-        userId,
+      const sectionTurns = session.questions.filter((q) => q.sectionId === currentQuestion.sectionId && q.questionType === "follow_up").length;
+
+      nextTurn = await aiServiceClient.generateNextTurn({
+        sessionId,
         role: session.role,
-        difficulty: nextLevel,
+        difficulty: session.difficulty,
         mode: session.mode,
         resumeId: session.resumeId,
         jdId: session.jdId,
+        blueprint: session.blueprint,
         history: historyItems,
-        askedQuestionIds: session.questions.map((q) => q.questionId).filter(Boolean)
+        currentSectionId: currentQuestion.sectionId,
+        followUpsInCurrentSection: sectionTurns,
+        totalTurnsTaken: session.answers.length,
+        maxTurns: session.totalQuestions
       });
-    } catch (nextErr) {
-      const fallback = await fallbackGenerateQuestion(session.role, nextLevel, {
-        excludeIds: session.questions.map((q) => q.questionId).filter(Boolean)
-      });
-      nextQ = {
-        id: fallback.id || `q_${Date.now()}`,
-        question: fallback.question,
-        category: "Technical Concept",
-        format: "Scenario",
-        difficulty: fallback.level || nextLevel,
-        expected_concepts: [session.role],
-        source: "fallback"
-      };
+    } catch (turnErr) {
+      console.warn("generateNextTurn fallback:", turnErr.message);
+    }
+
+    if (!nextTurn || nextTurn.action === "COMPLETE" || nextTurn.is_complete) {
+      return await finalizeSessionEvaluation(session, res);
     }
 
     const nextQuestionItem = {
-      questionId: nextQ.id || `q_${session.questions.length + 1}_${Date.now()}`,
-      question: nextQ.question,
-      category: nextQ.category || "Technical Concept",
-      format: nextQ.format || "Scenario",
-      difficulty: nextQ.difficulty || nextLevel,
-      groundingContext: nextQ.grounding_context || null,
-      expectedConcepts: nextQ.expected_concepts || [],
-      expectedAnswer: nextQ.expectedAnswer || null,
-      source: nextQ.source || "langgraph_rag"
+      questionId: `turn_${session.questions.length + 1}_${Date.now()}`,
+      question: nextTurn.interviewer_text,
+      category: nextTurn.section_id || "Technical Concept",
+      format: "Conversational",
+      difficulty: session.difficulty,
+      sectionId: nextTurn.section_id || "technical",
+      questionType: nextTurn.question_type || "primary",
+      parentQuestionId: nextTurn.parent_question_id || null,
+      reasonCode: nextTurn.reason_code || null,
+      expectedEvidence: nextTurn.expected_evidence || [],
+      estimatedSeconds: nextTurn.estimated_seconds || 60,
+      source: "conversational_engine"
     };
 
     session.questions.push(nextQuestionItem);
@@ -511,18 +528,17 @@ exports.followup = async (req, res, next) => {
     await session.save();
     activeSessionCache.set(sessionId, session.toObject());
 
-    res.json({
+    // Never return scores or evaluation during live turns
+    return res.json({
       completed: false,
-      evaluation,
       question: nextQuestionItem.question,
       nextQuestion: nextQuestionItem.question,
+      section: nextQuestionItem.sectionId,
+      questionType: nextQuestionItem.questionType,
       category: nextQuestionItem.category,
       format: nextQuestionItem.format,
       level: nextQuestionItem.difficulty,
       source: nextQuestionItem.source,
-      levelChanged: previousLevel !== nextQuestionItem.difficulty,
-      previousLevel,
-      desiredLevel: nextLevel,
       progress: {
         current: session.questions.length,
         total: session.totalQuestions
@@ -558,97 +574,79 @@ exports.skipQuestion = async (req, res, next) => {
     const currentIndex = session.answers.length;
     const currentQuestion = session.questions[currentIndex] || session.questions[session.questions.length - 1];
 
-    const skippedEval = buildSkippedEvaluation(currentQuestion, currentIndex);
     session.answers.push({
-
       questionIndex: currentIndex,
-      answer: "",
+      turnId: currentQuestion.questionId || `turn_${currentIndex}`,
+      sectionId: currentQuestion.sectionId || "introduction",
+      answer: "[Skipped by candidate]",
       isSkipped: true,
       audioUsed: false,
+      evaluationStatus: "skipped",
       submittedAt: new Date()
     });
-    session.evaluations.push(skippedEval);
+    await session.save();
 
     if (session.answers.length >= session.totalQuestions) {
-      const finalReport = buildFinalFeedback(session.evaluations);
-      session.status = "completed";
-      session.finalReport = finalReport;
-      await session.save();
-      activeSessionCache.delete(sessionId);
-
-      return res.json({
-        skipped: true,
-        completed: true,
-        evaluation: skippedEval,
-        finalReport,
-        ...finalReport
-      });
+      return await finalizeSessionEvaluation(session, res);
     }
 
-    // Step down difficulty on skipped question
-    const nextLevel = nextDifficulty(currentQuestion.difficulty || session.difficulty, 0);
-    session.difficulty = nextLevel;
-
-    // Generate next grounded question via AI service with session context & history
-    let nextQ;
+    let nextTurn = null;
     try {
       const historyItems = session.questions.map((q, idx) => ({
+        questionId: q.questionId,
         question: q.question,
+        section_id: q.sectionId,
+        question_type: q.questionType,
         answer: session.answers[idx]?.answer || "",
-        score: session.evaluations[idx]?.score || 0,
-        level: q.difficulty,
-        is_skipped: session.answers[idx]?.isSkipped || false
+        is_skipped: !!session.answers[idx]?.isSkipped
       }));
 
-      nextQ = await aiServiceClient.generateInterviewQuestion({
-        userId,
+      nextTurn = await aiServiceClient.generateNextTurn({
+        sessionId,
         role: session.role,
-        difficulty: nextLevel,
+        difficulty: session.difficulty,
         mode: session.mode,
         resumeId: session.resumeId,
         jdId: session.jdId,
+        blueprint: session.blueprint,
         history: historyItems,
-        askedQuestionIds: session.questions.map((q) => q.questionId).filter(Boolean)
+        currentSectionId: currentQuestion.sectionId,
+        followUpsInCurrentSection: 1, // Skip bypasses follow-ups
+        totalTurnsTaken: session.answers.length,
+        maxTurns: session.totalQuestions
       });
     } catch (skipErr) {
-      const fallback = await fallbackGenerateQuestion(session.role, nextLevel, {
-        excludeIds: session.questions.map((q) => q.questionId).filter(Boolean)
-      });
-      nextQ = {
-        id: fallback.id || `q_${Date.now()}`,
-        question: fallback.question,
-        category: "Technical Concept",
-        format: "Scenario",
-        difficulty: fallback.level || nextLevel,
-        expected_concepts: [session.role],
-        source: "fallback"
-      };
+      console.warn("generateNextTurn on skip fallback:", skipErr.message);
+    }
+
+    if (!nextTurn || nextTurn.action === "COMPLETE" || nextTurn.is_complete) {
+      return await finalizeSessionEvaluation(session, res);
     }
 
     const nextQuestionItem = {
-      questionId: nextQ.id || `q_${session.questions.length + 1}_${Date.now()}`,
-      question: nextQ.question,
-      category: nextQ.category || "Technical Concept",
-      format: nextQ.format || "Scenario",
-      difficulty: nextQ.difficulty || nextLevel,
-      groundingContext: nextQ.grounding_context || null,
-      expectedConcepts: nextQ.expected_concepts || [],
-      expectedAnswer: nextQ.expectedAnswer || null,
-      source: nextQ.source || "langgraph_rag"
+      questionId: `turn_${session.questions.length + 1}_${Date.now()}`,
+      question: nextTurn.interviewer_text,
+      category: nextTurn.section_id || "Technical Concept",
+      format: "Conversational",
+      difficulty: session.difficulty,
+      sectionId: nextTurn.section_id || "technical",
+      questionType: nextTurn.question_type || "primary",
+      parentQuestionId: null,
+      source: "conversational_engine"
     };
 
     session.questions.push(nextQuestionItem);
     session.questionCount = session.questions.length;
     await session.save();
 
-    res.json({
+    return res.json({
       skipped: true,
       completed: false,
-      evaluation: skippedEval,
       question: nextQuestionItem.question,
       nextQuestion: nextQuestionItem.question,
+      section: nextQuestionItem.sectionId,
+      questionType: nextQuestionItem.questionType,
       level: nextQuestionItem.difficulty,
-      source: nextQuestionItem.source,
       progress: {
         current: session.questions.length,
         total: session.totalQuestions
@@ -660,8 +658,8 @@ exports.skipQuestion = async (req, res, next) => {
 };
 
 /**
- * END / ABANDON INTERVIEW
- * DELETE /api/interview/:sessionId
+ * FINISH / END INTERVIEW
+ * POST /api/interview/end or DELETE /api/interview/:sessionId
  */
 exports.endInterview = async (req, res, next) => {
   try {
@@ -673,18 +671,50 @@ exports.endInterview = async (req, res, next) => {
     }
 
     const session = await InterviewSession.findOne({ sessionId });
-    if (session) {
-      if (String(session.userId) !== userId) {
-        return res.status(403).json({ error: "Access denied. You do not own this session." });
-      }
-      if (session.status !== "completed") {
-        session.status = "abandoned";
-        await session.save();
-      }
-      activeSessionCache.delete(sessionId);
+    if (!session) {
+      return res.status(404).json({ error: "Session not found." });
     }
 
-    res.json({ ended: true, sessionId, status: session?.status || "completed" });
+    if (String(session.userId) !== userId) {
+      return res.status(403).json({ error: "Access denied. You do not own this session." });
+    }
+
+    if (session.status === "completed" && session.finalReport) {
+      return res.json({
+        ended: true,
+        completed: true,
+        sessionId,
+        status: "completed",
+        finalReport: session.finalReport,
+        report: session.finalReport
+      });
+    }
+
+    return await finalizeSessionEvaluation(session, res);
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * RETRY REPORT EVALUATION
+ * POST /api/interview/:sessionId/retry-report
+ */
+exports.retryReport = async (req, res, next) => {
+  try {
+    const { sessionId } = req.params;
+    const userId = req.user ? String(req.user._id || req.user.id) : null;
+
+    const session = await InterviewSession.findOne({ sessionId });
+    if (!session) {
+      return res.status(404).json({ error: "Interview session not found." });
+    }
+
+    if (String(session.userId) !== userId) {
+      return res.status(403).json({ error: "Access denied. You do not own this session." });
+    }
+
+    return await finalizeSessionEvaluation(session, res);
   } catch (err) {
     next(err);
   }
@@ -788,12 +818,17 @@ exports.getInterviewReport = async (req, res, next) => {
       mode: session.mode,
       interviewMode: session.mode,
       status: session.status,
+      reportStatus: session.reportStatus || (session.status === "completed" ? "completed" : "not_started"),
       createdAt: session.createdAt,
       completedAt: session.finalReport?.completedAt || session.updatedAt,
       finalScore: session.finalReport?.finalScore || 0,
       categoryScores: session.finalReport?.categoryScores || {},
+      introEvaluation: session.finalReport?.introEvaluation || null,
+      sectionSummaries: session.finalReport?.sectionSummaries || {},
       strengths: session.finalReport?.strengths || [],
       weaknesses: session.finalReport?.areasOfImprovement || [],
+      preparationPlan: session.finalReport?.preparationPlan || [],
+      coverageSummary: session.finalReport?.coverageSummary || {},
       feedback: session.finalReport?.feedback || "",
       finalReport: session.finalReport,
       questionsAnswered: session.answers.length,

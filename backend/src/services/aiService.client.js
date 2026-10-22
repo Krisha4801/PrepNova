@@ -270,15 +270,66 @@ class AiServiceClient {
   }
 
   /**
-   * Evaluate full interview session transcript in a single batch LLM call
-   * @param {Object} params - { role, difficulty, transcript }
+   * Plan a structured interview blueprint before presenting the first question
+   * @param {Object} params - { userId, role, difficulty, mode, resumeId, jdId, targetDurationMinutes, focusAreas }
+   */
+  async planBlueprint(params = {}) {
+    try {
+      const response = await this.httpClient.post("/interview/plan-blueprint", {
+        user_id: params.userId || null,
+        role: params.role || "Software Engineer",
+        difficulty: params.difficulty || "beginner",
+        mode: params.mode || null,
+        resume_id: params.resumeId || null,
+        jd_id: params.jdId || null,
+        target_duration_minutes: params.targetDurationMinutes || 30,
+        focus_areas: params.focusAreas || []
+      });
+      return response.data;
+    } catch (err) {
+      throw normalizeAiServiceError(err, "Interview blueprint planning");
+    }
+  }
+
+  /**
+   * Generate the next conversational turn according to the blueprint and context
+   * @param {Object} params - { sessionId, role, difficulty, mode, resumeId, jdId, blueprint, history, currentSectionId, followUpsInCurrentSection, totalTurnsTaken, maxTurns }
+   */
+  async generateNextTurn(params = {}) {
+    try {
+      const response = await this.httpClient.post("/interview/next-turn", {
+        session_id: params.sessionId,
+        role: params.role || "Candidate",
+        difficulty: params.difficulty || "beginner",
+        mode: params.mode || null,
+        resume_id: params.resumeId || null,
+        jd_id: params.jdId || null,
+        blueprint: params.blueprint || null,
+        history: params.history || [],
+        current_section_id: params.currentSectionId || "introduction",
+        follow_ups_in_current_section: params.followUpsInCurrentSection || 0,
+        total_turns_taken: params.totalTurnsTaken || 0,
+        max_turns: params.maxTurns || 6
+      });
+      return response.data;
+    } catch (err) {
+      throw normalizeAiServiceError(err, "Next turn generation");
+    }
+  }
+
+  /**
+   * Evaluate full interview session transcript strictly at completion in a single holistic batch call
+   * @param {Object} params - { role, difficulty, transcript, blueprint, resumeId, jdId }
    */
   async evaluateSession(params = {}) {
     try {
       const response = await this.httpClient.post("/interview/evaluate-session", {
         role: params.role || "Candidate",
         difficulty: params.difficulty || "beginner",
-        transcript: params.transcript || []
+        transcript: params.transcript || [],
+        blueprint: params.blueprint || null,
+        resume_id: params.resumeId || null,
+        jd_id: params.jdId || null
       });
       return response.data;
     } catch (err) {

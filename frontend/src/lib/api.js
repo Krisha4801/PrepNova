@@ -23,6 +23,7 @@ export const API_ENDPOINTS = {
   INTERVIEW_HISTORY: `${API_BASE_URL}/api/interview/history`,
   INTERVIEW_ANALYTICS: `${API_BASE_URL}/api/interview/analytics`,
   INTERVIEW_REPORT: (sessionId) => `${API_BASE_URL}/api/interview/${encodeURIComponent(sessionId)}/report`,
+  INTERVIEW_RETRY_REPORT: (sessionId) => `${API_BASE_URL}/api/interview/${encodeURIComponent(sessionId)}/retry-report`,
   INTERVIEW_PDF: (sessionId) => `${API_BASE_URL}/api/interview/${encodeURIComponent(sessionId)}/pdf`,
   INTERVIEW_END: (sessionId) => `${API_BASE_URL}/api/interview/${encodeURIComponent(sessionId)}`,
   RESUMES: `${API_BASE_URL}/api/resumes`,
@@ -292,6 +293,12 @@ export async function getDashboardAnalyticsApi() {
 export async function getInterviewReportApi(sessionId) {
   return await apiFetch(API_ENDPOINTS.INTERVIEW_REPORT(sessionId), {
     method: "GET"
+  });
+}
+
+export async function retryInterviewReportApi(sessionId) {
+  return await apiFetch(API_ENDPOINTS.INTERVIEW_RETRY_REPORT(sessionId), {
+    method: "POST"
   });
 }
 

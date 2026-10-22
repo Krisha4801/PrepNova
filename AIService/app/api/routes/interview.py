@@ -5,12 +5,18 @@ from app.schemas.interview import (
     EvaluateAnswerRequest,
     AnswerEvaluation,
     EvaluateSessionRequest,
-    SessionEvaluationResult
+    SessionEvaluationResult,
+    InterviewBlueprint,
+    PlanBlueprintRequest,
+    NextTurnRequest,
+    NextTurnResponse
 )
 from app.services.interview.graph import (
     question_workflow,
     evaluation_workflow,
     evaluate_full_session,
+    plan_interview_blueprint,
+    generate_next_turn,
     QuestionState,
     EvaluationState
 )
@@ -112,6 +118,35 @@ async def evaluate_interview_session(request: EvaluateSessionRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Session evaluation error: {str(e)}"
+        )
+
+
+@router.post("/plan-blueprint", response_model=InterviewBlueprint)
+async def plan_blueprint_endpoint(request: PlanBlueprintRequest):
+    """
+    Plans and returns a calibrated interview blueprint before presenting the first question.
+    """
+    try:
+        return plan_interview_blueprint(request)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Blueprint planning error: {str(e)}"
+        )
+
+
+@router.post("/next-turn", response_model=NextTurnResponse)
+async def next_turn_endpoint(request: NextTurnRequest):
+    """
+    Generates the next single conversational turn according to the blueprint,
+    bounded follow-up policy, and non-repetition constraints.
+    """
+    try:
+        return generate_next_turn(request)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Next turn generation error: {str(e)}"
         )
 
 

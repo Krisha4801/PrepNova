@@ -109,37 +109,87 @@ describe("Interview Lifecycle & History Integration Tests", () => {
     originalGenerateQuestion = aiServiceClient.generateInterviewQuestion;
     originalEvaluateAnswer = aiServiceClient.evaluateInterviewAnswer;
 
-    aiServiceClient.generateInterviewQuestion = async (params) => {
+    aiServiceClient.planBlueprint = async (params) => {
       return {
-        question: `Generated question for ${params.role} at level ${params.difficulty}`,
-        category: "Technical Concepts",
-        format: "scenario",
+        version: 1,
+        role: params.role || "Frontend Developer",
         difficulty: params.difficulty || "intermediate",
-        expected_concepts: ["State Lifecycle", "Reconciliation", "Virtual DOM"],
-        grounding_context: "Curated role knowledge base for Frontend Developer",
-        source: "role_knowledge_base"
+        target_duration_minutes: 30,
+        sections: [
+          { id: "introduction", title: "Introduction", type: "introduction", applicable: true },
+          { id: "projects", title: "Projects", type: "projects", applicable: true },
+          { id: "skills", title: "Skills", type: "skills", applicable: true },
+          { id: "technical_concepts", title: "Technical Fundamentals", type: "technical_concepts", applicable: true },
+          { id: "scenario", title: "Scenario", type: "scenario", applicable: true },
+          { id: "behavioral", title: "Behavioral", type: "behavioral", applicable: true }
+        ],
+        global_rules: { maxFollowUpsPerQuestion: 1, evaluateOnlyAfterCompletion: true }
       };
     };
 
-    aiServiceClient.evaluateInterviewAnswer = async (params) => {
+    aiServiceClient.generateNextTurn = async (params) => {
+      const turnsTaken = params.totalTurnsTaken || 0;
+      if (turnsTaken >= 6) {
+        return {
+          action: "COMPLETE",
+          is_complete: true,
+          interviewer_text: "Thank you for completing the interview!"
+        };
+      }
       return {
-        score: 8.5,
-        rating: 8.5,
-        relevance: 9.0,
-        correctness: 8.5,
-        completeness: 8.0,
-        clarity: 8.5,
-        depth: 8.0,
-        feedback: "Clear technical explanation demonstrating solid understanding of concepts.",
-        strengths: ["Strong architectural terminology", "Clear structural rationale"],
-        weaknesses: ["Could elaborate on concurrency bottlenecks"],
-        areas_of_improvement: ["Mention edge-case handling in state updates"],
-        recommended_difficulty: "hard"
+        action: "ASK_QUESTION",
+        section_id: turnsTaken === 1 ? "projects" : "technical_concepts",
+        question_type: "primary",
+        interviewer_text: `Next technical question #${turnsTaken + 1} for ${params.role}`,
+        is_complete: false
+      };
+    };
+
+    aiServiceClient.evaluateSession = async (params) => {
+      return {
+        overall_score: 8.5,
+        rating_label: "Interview Ready",
+        category_scores: {
+          correctness: 8.5,
+          clarity: 8.5,
+          depth: 8.0,
+          relevance: 9.0,
+          completeness: 8.5
+        },
+        intro_evaluation: {
+          score: 8.5,
+          structure: "Structured, concise introduction.",
+          role_relevance: `Aligned well with ${params.role}`,
+          evidence: "Highlighted key frontend experiences.",
+          conciseness: "Paced well.",
+          clarity: "Articulate delivery.",
+          strengths: ["Clear overview", "Relevant tools cited"],
+          improvements: ["Quantify impact earlier"],
+          sample_improved_answer: "Hi, I am a frontend developer with extensive React experience..."
+        },
+        section_summaries: {
+          introduction: "Clear self-summary.",
+          projects: "Good architecture details."
+        },
+        feedback: "Strong overall performance.",
+        strengths: ["Clear technical reasoning", "Good architecture choices"],
+        areas_of_improvement: ["Elaborate on performance metrics"],
+        preparation_plan: ["Study web vitals optimization", "Practice STAR behavioral storytelling"],
+        coverage_summary: { total_turns: params.transcript?.length || 6, sections_assessed: ["Introduction", "Projects", "Technical"] },
+        evaluations: (params.transcript || []).map((t, idx) => ({
+          question_index: idx,
+          section_id: t.section_id || "technical",
+          score: 8.5,
+          feedback: "Solid answer with clear rationale.",
+          correctness: 8.5,
+          clarity: 8.5,
+          depth: 8.0,
+          relevance: 9.0,
+          completeness: 8.5
+        }))
       };
     };
   });
-
-
 
   after(async () => {
     if (mongoose.connection.readyState === 1) {
@@ -150,7 +200,7 @@ describe("Interview Lifecycle & History Integration Tests", () => {
   });
 
   describe("1. Interview Start & Input Combination Rules", () => {
-    it("1.1 should start interview with role selected (role knowledge base fallback)", async () => {
+    it("1.1 should start interview with role selected, generate blueprint, and open with introduction", async () => {
       const res = await request("/api/interview/start", {
         method: "POST",
         headers: { Authorization: `Bearer ${user1Token}` },
@@ -163,6 +213,8 @@ describe("Interview Lifecycle & History Integration Tests", () => {
       assert.strictEqual(res.status, 200);
       assert.ok(res.data.sessionId, "Session ID generated");
       assert.ok(res.data.question, "Initial question returned");
+      assert.match(res.data.question, /introduce yourself/i, "Turn 0 must be the opening self-introduction");
+      assert.strictEqual(res.data.section, "introduction");
       assert.strictEqual(res.data.progress.current, 1);
       activeSessionId = res.data.sessionId;
 
@@ -171,6 +223,9 @@ describe("Interview Lifecycle & History Integration Tests", () => {
       assert.ok(doc, "MongoDB session document exists");
       assert.strictEqual(String(doc.userId), user1Id);
       assert.strictEqual(doc.status, "in_progress");
+      assert.strictEqual(doc.reportStatus, "not_started");
+      assert.ok(doc.blueprint, "Blueprint persisted in session");
+      assert.strictEqual(doc.questions[0].sectionId, "introduction");
     });
 
     it("1.2 should reject start interview when neither resume nor role is provided", async () => {
@@ -184,7 +239,6 @@ describe("Interview Lifecycle & History Integration Tests", () => {
       assert.match(res.data.error, /insufficient/i);
     });
 
-
     it("1.3 should enforce authentication on interview start", async () => {
       const res = await request("/api/interview/start", {
         method: "POST",
@@ -195,25 +249,32 @@ describe("Interview Lifecycle & History Integration Tests", () => {
     });
   });
 
-  describe("2. Answer Submission, Rubric Evaluation & Adaptive Difficulty", () => {
-    it("2.1 should evaluate answer and advance session", async () => {
+  describe("2. Answer Submission, Zero Live Scoring & Conversational Engine", () => {
+    it("2.1 should accept answer without exposing live scores and advance to next question", async () => {
       const res = await request("/api/interview/followup", {
         method: "POST",
         headers: { Authorization: `Bearer ${user1Token}` },
         body: {
           sessionId: activeSessionId,
-          answer: "In React, reconciliation uses the virtual DOM diffing algorithm to compute minimal updates before committing them to the actual DOM tree."
+          answer: "Hi, I am a frontend developer with 2 years of experience using React, Redux, and TypeScript to build web platforms."
         }
       });
 
       assert.strictEqual(res.status, 200);
-      assert.ok(res.data.evaluation, "Evaluation provided");
-      assert.ok(typeof res.data.evaluation.score === "number", "Evaluation has numeric score");
+      // Spec: ZERO scores or evaluations exposed during live interview!
+      assert.strictEqual(res.data.evaluation, undefined, "Live evaluation must NOT be returned");
+      assert.strictEqual(res.data.score, undefined, "Live score must NOT be returned");
       assert.ok(res.data.question, "Next question returned");
+      assert.strictEqual(res.data.completed, false);
       assert.strictEqual(res.data.progress.current, 2);
+
+      // Verify answer persisted in MongoDB with evaluationStatus: "pending"
+      const doc = await InterviewSession.findOne({ sessionId: activeSessionId });
+      assert.strictEqual(doc.answers.length, 1);
+      assert.strictEqual(doc.answers[0].evaluationStatus, "pending");
     });
 
-    it("2.2 should handle skipped question gracefully", async () => {
+    it("2.2 should handle skipped question gracefully without live evaluation", async () => {
       const res = await request("/api/interview/skip", {
         method: "POST",
         headers: { Authorization: `Bearer ${user1Token}` },
@@ -221,7 +282,8 @@ describe("Interview Lifecycle & History Integration Tests", () => {
       });
 
       assert.strictEqual(res.status, 200);
-      assert.ok(res.data.evaluation, "Skip evaluation recorded");
+      assert.strictEqual(res.data.evaluation, undefined, "Live evaluation must NOT be returned on skip");
+      assert.strictEqual(res.data.skipped, true);
       assert.strictEqual(res.data.progress.current, 3);
     });
 
