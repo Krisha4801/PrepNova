@@ -39,6 +39,7 @@ export default function useInterviewSession({
   const [questionText, setQuestionText] = useState(initialQuestion || INITIAL_QUESTION_TEXT);
   const [lastEvaluation, setLastEvaluation] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [actionError, setActionError] = useState('');
 
   // Start a session whenever the role or difficulty changes, unless already initialized
   useEffect(() => {
@@ -81,25 +82,31 @@ export default function useInterviewSession({
     return () => { isMounted = false; };
   }, [role, difficulty, initialSessionId, initialQuestion, resumeId, jdId, totalQuestions, userName]);
 
-  const advanceLocally = () =>
-    setCurrentQuestionIdx((prev) => Math.min(totalQuestions, prev + 1));
-
   /** Runs a skip/answer request and applies the server's next-turn payload. */
   const runTurn = async (request) => {
     setLoading(true);
+    setActionError('');
     try {
       const data = await request();
 
       if (data.completed) {
         onComplete(data, { sessionId, currentQuestionIdx });
-        return;
+        return true;
       }
       if (data.question) setQuestionText(data.question);
       if (data.evaluation) setLastEvaluation(data.evaluation);
       if (data.progress?.current) setCurrentQuestionIdx(data.progress.current);
-    } catch (_) {
-      // Backend unavailable: keep the UI moving.
-      advanceLocally();
+      return true;
+    } catch (err) {
+      try {
+        const report = await interviewApi.getInterviewReport(sessionId);
+        if (report?.completed || report?.finalReport || report?.report) {
+          onComplete(report, { sessionId, currentQuestionIdx });
+          return true;
+        }
+      } catch (_) { /* report is not ready; keep the current answer and question */ }
+      setActionError(err.message || 'Could not save your answer. Please try again.');
+      return false;
     } finally {
       setLoading(false);
     }
@@ -126,6 +133,7 @@ export default function useInterviewSession({
     questionText,
     lastEvaluation,
     loading,
+    actionError,
     skipQuestion,
     submitAnswer,
     endInterview,

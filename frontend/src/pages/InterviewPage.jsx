@@ -29,6 +29,7 @@ export default function InterviewPage() {
 
   const [textAnswer, setTextAnswer] = useState('');
   const [showEndModal, setShowEndModal] = useState(false);
+  const [actionError, setActionError] = useState('');
 
   const { isRecording, toggleRecording } = useSpeechRecognition(setTextAnswer);
 
@@ -52,6 +53,7 @@ export default function InterviewPage() {
     questionText,
     lastEvaluation,
     loading,
+    actionError: sessionActionError,
     skipQuestion,
     submitAnswer,
     endInterview,
@@ -67,9 +69,10 @@ export default function InterviewPage() {
     onComplete: finishInterview,
   });
 
+  React.useEffect(() => setActionError(sessionActionError), [sessionActionError]);
+
   const handleSkip = async () => {
-    await skipQuestion();
-    setTextAnswer('');
+    if (await skipQuestion()) setTextAnswer('');
   };
 
   const handleSubmit = async (e) => {
@@ -77,8 +80,7 @@ export default function InterviewPage() {
     const answer = textAnswer.trim();
     if (!answer) return;
 
-    await submitAnswer(answer);
-    setTextAnswer('');
+    if (await submitAnswer(answer)) setTextAnswer('');
   };
 
   return (
@@ -103,6 +105,7 @@ export default function InterviewPage() {
             onSpeak={() => toggleSpeech(questionText)}
           />
           {lastEvaluation && <EvaluationBanner evaluation={lastEvaluation} />}
+          {actionError && <p role="alert" className="text-sm text-rose-600">{actionError}</p>}
         </div>
 
         <AnswerComposer

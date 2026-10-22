@@ -169,10 +169,58 @@ Ask one logical follow-up interview question.
 };
 
 exports.evaluateAnswer = async (role, level, questionRecord, answer) => {
-  const localEvaluation = evaluateAnswerLocally(questionRecord, answer);
+  const answerText = String(answer || "").trim();
+  const normalizedAnswer = answerText.toLowerCase().replace(/[^a-z0-9']+/g, " ").trim();
+  if (!normalizedAnswer || /^(?:idk|i do not know|i don't know|i dont know|dont know|no idea|i have no idea|not sure|i am not sure|i'm not sure|no clue|pass|skip|i cannot answer|i can't answer)$/.test(normalizedAnswer)) {
+    return {
+      source: "non_answer",
+      correctness: 0,
+      clarity: 0,
+      depth: 0,
+      rating: 0,
+      feedback: "This response did not demonstrate knowledge of the question. Review the reference answer and try again.",
+      strengths: [],
+      areasOfImprovement: ["Address the question with a relevant concept and a brief explanation."],
+      matchedConcepts: [],
+      missedConcepts: [],
+      referenceAnswer: questionRecord?.expectedAnswer || null
+    };
+  }
+
+  const expectedConcepts = questionRecord?.expectedConcepts || questionRecord?.expected_concepts || [];
+  const rubricRecord = questionRecord && {
+    ...questionRecord,
+    expectedAnswer: questionRecord.expectedAnswer
+      || questionRecord.expected_answer
+      || questionRecord.groundingContext
+      || questionRecord.grounding_context
+      || (Array.isArray(expectedConcepts) ? expectedConcepts.join(" ") : String(expectedConcepts))
+  };
+  const localEvaluation = evaluateAnswerLocally(rubricRecord, answer);
 
   if (localEvaluation) {
     return localEvaluation;
+  }
+
+  if (!process.env.GROQ_API_KEY) {
+    const wordCount = answerText.split(/\s+/).filter(Boolean).length;
+    const depthCue = /\b(because|example|trade-?off|impact|constraint|risk|measure|however|in practice)\b/i.test(answerText);
+    const clarity = roundScore(Math.min(4, 1 + Math.min(wordCount, 30) / 15));
+    const depth = depthCue ? 2 : 1;
+    const correctness = 1;
+    return {
+      source: "limited_rubric",
+      correctness,
+      clarity,
+      depth,
+      rating: roundScore((correctness * 0.5) + (clarity * 0.25) + (depth * 0.25)),
+      feedback: "The answer was saved, but a reliable correctness score was unavailable because this question has no reference rubric and GROQ_API_KEY is not configured.",
+      strengths: [],
+      areasOfImprovement: ["Configure GROQ_API_KEY or provide reference concepts for reliable answer evaluation."],
+      matchedConcepts: [],
+      missedConcepts: Array.isArray(expectedConcepts) ? expectedConcepts.map(String) : [],
+      referenceAnswer: null
+    };
   }
 
   const normalizedLevel = normalizeLevel(level) || "beginner";

@@ -165,16 +165,7 @@ export default function ResumeAnalysisPage() {
       }
       setToastMessage('Resume parsed and saved as active resume.');
     } catch (err) {
-      const fallback = {
-        fileName: file.name,
-        fileSize: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
-        uploadDate: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-        atsScore: 84,
-        status: 'Parsed'
-      };
-      setResumeData(fallback);
-      localStorage.setItem('prepnova_uploaded_resume', JSON.stringify(fallback));
-      setToastMessage('Document parsed locally.');
+      setToastMessage(err.message || 'Resume extraction failed. Check the AI service configuration and try again.');
     } finally {
       setIsAnalyzing(false);
       setTimeout(() => setToastMessage(null), 3000);

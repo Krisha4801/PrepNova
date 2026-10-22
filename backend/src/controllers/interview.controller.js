@@ -1,6 +1,7 @@
 const InterviewSession = require("../models/InterviewSession");
 const Resume = require("../models/Resume");
 const JobDescription = require("../models/JobDescription");
+const { findQuestion } = require("../services/questionBank.service");
 const { aiServiceClient } = require("../services/aiService.client");
 const {
   LEVELS,
@@ -54,6 +55,30 @@ function uniquePush(items, value) {
   if (value && !items.includes(value)) {
     items.push(value);
   }
+}
+
+function isNonAnswer(answer) {
+  const normalized = String(answer || "").toLowerCase().replace(/[^a-z0-9']+/g, " ").trim();
+  return !normalized || /^(?:idk|i do not know|i don't know|i dont know|dont know|no idea|i have no idea|not sure|i am not sure|i'm not sure|no clue|pass|skip|i cannot answer|i can't answer)$/.test(normalized);
+}
+
+function roleBankTurn(session) {
+  if (session.mode !== "role") return null;
+  const question = findQuestion({
+    role: session.role,
+    level: session.difficulty,
+    excludeIds: session.questions.map((item) => item.questionId).filter(Boolean)
+  });
+  if (!question.found) return null;
+  return {
+    action: "ASK_QUESTION",
+    interviewer_text: question.question,
+    section_id: "technical",
+    question_type: "primary",
+    question_id: question.id,
+    source: question.source,
+    expected_evidence: [question.expectedAnswer].filter(Boolean)
+  };
 }
 
 function buildFinalFeedback(evaluations) {
@@ -263,20 +288,25 @@ exports.startInterview = async (req, res, next) => {
       console.warn("Blueprint planning fallback:", blueprintErr.message);
     }
 
-    // Spec Requirement (Section 3.2): First question is ALWAYS the opening self-introduction
-    const introQuestionText = `Hello! To get started, could you please introduce yourself and highlight the key experiences, skills, and projects most relevant to this ${selectedRole} position?`;
+    // Role-only sessions begin with the static role bank. Other modes use the intro prompt.
+    const openingBankQuestion = mode === "role"
+      ? findQuestion({ role: selectedRole, level: selectedLevel })
+      : { found: false };
+    const introQuestionText = openingBankQuestion.found
+      ? openingBankQuestion.question
+      : `Hello! To get started, could you please introduce yourself and highlight the key experiences, skills, and projects most relevant to this ${selectedRole} position?`;
 
     const firstQuestionItem = {
-      questionId: `turn_0_${Date.now()}`,
+      questionId: openingBankQuestion.found ? openingBankQuestion.id : `turn_0_${Date.now()}`,
       question: introQuestionText,
       category: "Introduction",
       format: "Open",
       difficulty: selectedLevel,
       groundingContext: null,
       expectedConcepts: [selectedRole],
-      expectedAnswer: null,
-      source: "conversational_engine",
-      sectionId: "introduction",
+      expectedAnswer: openingBankQuestion.expectedAnswer || null,
+      source: openingBankQuestion.source || "conversational_engine",
+      sectionId: openingBankQuestion.found ? "technical" : "introduction",
       questionType: "primary",
       estimatedSeconds: 90
     };
@@ -369,6 +399,28 @@ async function finalizeSessionEvaluation(session, res) {
     if (batchResult) {
       const formattedEvaluations = (batchResult.evaluations || []).map((ev, idx) => {
         const qIdx = typeof ev.question_index === "number" ? ev.question_index : (typeof ev.questionIndex === "number" ? ev.questionIndex : idx);
+        const answer = session.answers.find((item) => item.questionIndex === qIdx);
+        const nonAnswer = !answer || answer.isSkipped || isNonAnswer(answer.answer);
+        if (nonAnswer) {
+          return {
+            questionIndex: qIdx,
+            question_index: qIdx,
+            sectionId: ev.section_id || ev.sectionId || null,
+            section_id: ev.section_id || ev.sectionId || null,
+            score: 0,
+            relevance: 0,
+            correctness: 0,
+            completeness: 0,
+            clarity: 0,
+            depth: 0,
+            ratingLabel: "Unanswered",
+            feedback: "No relevant answer was provided.",
+            strengths: [],
+            areasOfImprovement: ["Attempt the question with a relevant concept and a brief explanation."],
+            matchedConcepts: [],
+            missedConcepts: []
+          };
+        }
         const scoreVal = roundScore(ev.score);
         return {
           questionIndex: qIdx,
@@ -390,16 +442,24 @@ async function finalizeSessionEvaluation(session, res) {
         };
       });
 
+      // The transcript's turn scores are authoritative. Do not let session
+      // level LLM aggregation give credit to skipped or explicit non-answers.
+      const reportScore = formattedEvaluations.length
+        ? roundScore(formattedEvaluations.reduce((sum, ev) => sum + ev.score, 0) / formattedEvaluations.length)
+        : roundScore(batchResult.overall_score);
+      const reportCategoryScores = Object.fromEntries(
+        ["correctness", "clarity", "depth", "relevance", "completeness"].map((field) => [
+          field,
+          formattedEvaluations.length
+            ? roundScore(formattedEvaluations.reduce((sum, ev) => sum + Number(ev[field] || 0), 0) / formattedEvaluations.length)
+            : 0
+        ])
+      );
+
       finalReport = {
-        finalScore: roundScore(batchResult.overall_score),
-        rating: batchResult.rating_label || ratingLabel(batchResult.overall_score),
-        categoryScores: batchResult.category_scores || {
-          correctness: 7.5,
-          clarity: 7.5,
-          depth: 7.0,
-          relevance: 8.0,
-          completeness: 7.5
-        },
+        finalScore: reportScore,
+        rating: ratingLabel(reportScore),
+        categoryScores: reportCategoryScores,
         introEvaluation: batchResult.intro_evaluation || null,
         sectionSummaries: batchResult.section_summaries || {},
         strengths: batchResult.strengths || [],
@@ -414,13 +474,13 @@ async function finalizeSessionEvaluation(session, res) {
       session.evaluations = formattedEvaluations;
     } else {
       const answeredTurns = session.answers.filter(
-        (a) => a && !a.isSkipped && String(a.answer || "").trim() && !String(a.answer).toLowerCase().includes("skipped")
+        (a) => a && !a.isSkipped && String(a.answer || "").trim() && !String(a.answer).toLowerCase().includes("skipped") && !isNonAnswer(a.answer)
       );
       const isUnansweredSession = answeredTurns.length === 0;
 
       const fallbackEvals = session.questions.map((q, idx) => {
         const ansObj = session.answers[idx];
-        const hasSubstantiveAnswer = ansObj && !ansObj.isSkipped && String(ansObj.answer || "").trim() && !String(ansObj.answer).toLowerCase().includes("skipped");
+        const hasSubstantiveAnswer = ansObj && !ansObj.isSkipped && String(ansObj.answer || "").trim() && !String(ansObj.answer).toLowerCase().includes("skipped") && !isNonAnswer(ansObj.answer);
         const qScore = hasSubstantiveAnswer ? 6.5 : 0.0;
         return {
           questionIndex: idx,
@@ -590,7 +650,7 @@ exports.followup = async (req, res, next) => {
 
       const sectionTurns = session.questions.filter((q) => q.sectionId === currentQuestion.sectionId && q.questionType === "follow_up").length;
 
-      nextTurn = await aiServiceClient.generateNextTurn({
+      nextTurn = roleBankTurn(session) || await aiServiceClient.generateNextTurn({
         sessionId,
         userId,
         role: session.role,
@@ -625,7 +685,8 @@ exports.followup = async (req, res, next) => {
       reasonCode: nextTurn.reason_code || null,
       expectedEvidence: nextTurn.expected_evidence || [],
       estimatedSeconds: nextTurn.estimated_seconds || 60,
-      source: "conversational_engine"
+      expectedAnswer: nextTurn.expected_evidence?.join(" ") || null,
+      source: nextTurn.source || "conversational_engine"
     };
 
     session.questions.push(nextQuestionItem);
@@ -706,7 +767,7 @@ exports.skipQuestion = async (req, res, next) => {
         is_skipped: !!session.answers[idx]?.isSkipped
       }));
 
-      nextTurn = await aiServiceClient.generateNextTurn({
+      nextTurn = roleBankTurn(session) || await aiServiceClient.generateNextTurn({
         sessionId,
         userId,
         role: session.role,
@@ -738,7 +799,9 @@ exports.skipQuestion = async (req, res, next) => {
       sectionId: nextTurn.section_id || "technical",
       questionType: nextTurn.question_type || "primary",
       parentQuestionId: null,
-      source: "conversational_engine"
+      expectedEvidence: nextTurn.expected_evidence || [],
+      expectedAnswer: nextTurn.expected_evidence?.join(" ") || null,
+      source: nextTurn.source || "conversational_engine"
     };
 
     session.questions.push(nextQuestionItem);

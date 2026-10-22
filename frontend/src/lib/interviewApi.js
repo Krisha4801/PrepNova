@@ -44,3 +44,7 @@ export const submitAnswer = (sessionId, answer) =>
 /** Ends (deletes) a session on the server. */
 export const endSession = (sessionId) =>
   request(API_ENDPOINTS.INTERVIEW_END(sessionId), { method: 'DELETE' });
+
+/** Fetches the saved report if a turn request failed after session completion. */
+export const getInterviewReport = (sessionId) =>
+  request(API_ENDPOINTS.INTERVIEW_REPORT(sessionId), { method: 'GET' });

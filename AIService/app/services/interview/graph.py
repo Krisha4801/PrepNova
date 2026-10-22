@@ -72,6 +72,17 @@ def calculate_next_difficulty(current_difficulty: str, score: float) -> str:
     return current
 
 
+def is_non_answer(answer: str) -> bool:
+    normalized = " ".join(
+        "".join(char if char.isalnum() or char == "'" else " " for char in str(answer or "").lower()).split()
+    )
+    return not normalized or normalized in {
+        "idk", "i do not know", "i don't know", "i dont know", "dont know",
+        "no idea", "i have no idea", "not sure", "i am not sure", "i'm not sure",
+        "no clue", "pass", "skip", "i cannot answer", "i can't answer",
+    }
+
+
 # =========================================================
 # REPETITION DETECTION HELPERS
 # =========================================================
@@ -1005,6 +1016,17 @@ class EvaluationState(BaseModel):
 
 
 def evaluate_answer_node(state: EvaluationState) -> Dict[str, Any]:
+    if is_non_answer(state.answer):
+        score = 0.0
+        return {"evaluation": AnswerEvaluation(
+            score=score, relevance=score, correctness=score, completeness=score,
+            clarity=score, depth=score, rating_label=get_rating_label(score),
+            feedback="This response did not demonstrate knowledge of the question. Review the reference answer and try again.",
+            strengths=[], areas_of_improvement=["Address the question with a relevant concept and a brief explanation."],
+            matched_concepts=[], missed_concepts=state.expected_concepts or [],
+            reference_answer=None, next_difficulty=state.difficulty, source="non_answer"
+        )}
+
     llm = LLMClient().get_llm()
 
     system_prompt = """You are PrepNova's strict, fair technical interviewer evaluating a candidate's answer.
@@ -1539,7 +1561,6 @@ def evaluate_full_session(request: EvaluateSessionRequest) -> SessionEvaluationR
     Evaluates the self-introduction separately and scores all subsequent turns against the 5-part rubric.
     Produces deterministic aggregated scores and a complete preparation plan.
     """
-    llm = LLMClient().get_llm()
     transcript = request.transcript or []
     role = request.role or "Software Engineer"
     difficulty = request.difficulty or "beginner"
@@ -1564,6 +1585,12 @@ def evaluate_full_session(request: EvaluateSessionRequest) -> SessionEvaluationR
             evaluations=[],
             source="empty_session"
         )
+
+    non_answer_indexes = {
+        item.question_index for item in transcript
+        if item.is_skipped or is_non_answer(item.answer)
+    }
+    llm = LLMClient().get_llm()
 
     # Format transcript with clear turn demarcations
     transcript_lines = []
@@ -1706,6 +1733,19 @@ Evaluate the complete interview now and generate the full JSON report."""
         raw_evals = data.get("evaluations", [])
         for idx, item in enumerate(raw_evals):
             q_idx = int(item.get("question_index", idx))
+            if q_idx in non_answer_indexes:
+                eval_turns.append(EvaluatedTurn(
+                    question_index=q_idx,
+                    section_id=str(item.get("section_id", transcript[q_idx].section_id if q_idx < len(transcript) else "technical")),
+                    score=0.0,
+                    feedback="No relevant answer was provided.",
+                    correctness=0.0,
+                    clarity=0.0,
+                    depth=0.0,
+                    relevance=0.0,
+                    completeness=0.0,
+                ))
+                continue
             sc = round(max(0.0, min(10.0, float(item.get("score", overall)))), 1)
             eval_turns.append(EvaluatedTurn(
                 question_index=q_idx,
@@ -1734,6 +1774,26 @@ Evaluate the complete interview now and generate the full JSON report."""
                     completeness=overall
                 ))
 
+        if non_answer_indexes:
+            turns_by_index = {turn.question_index: turn for turn in eval_turns}
+            for item in transcript:
+                if item.question_index in non_answer_indexes:
+                    turns_by_index[item.question_index] = EvaluatedTurn(
+                        question_index=item.question_index,
+                        section_id=item.section_id or ("introduction" if item.question_index == 0 else "technical"),
+                        score=0.0,
+                        feedback="No relevant answer was provided.",
+                        correctness=0.0,
+                        clarity=0.0,
+                        depth=0.0,
+                        relevance=0.0,
+                        completeness=0.0,
+                    )
+            eval_turns = [turns_by_index[item.question_index] for item in transcript]
+            overall = round(sum(turn.score for turn in eval_turns) / len(transcript), 1)
+            for key, field in (("correctness", "correctness"), ("clarity", "clarity"), ("depth", "depth"), ("relevance", "relevance"), ("completeness", "completeness")):
+                cat_scores[key] = round(sum(getattr(turn, field) for turn in eval_turns) / len(eval_turns), 1)
+
         return SessionEvaluationResult(
             overall_score=round(overall, 1),
             rating_label=get_rating_label(overall),
@@ -1756,19 +1816,30 @@ Evaluate the complete interview now and generate the full JSON report."""
             EvaluatedTurn(
                 question_index=item.question_index,
                 section_id=item.section_id or ("introduction" if item.question_index == 0 else "technical"),
-                score=default_score,
-                feedback="Good effort. Aim for more precise technical terminology and concrete examples.",
-                correctness=7.5,
-                clarity=7.5,
-                depth=7.0,
-                relevance=8.0,
-                completeness=7.5
+                score=0.0 if item.question_index in non_answer_indexes else default_score,
+                feedback="No relevant answer was provided." if item.question_index in non_answer_indexes else "Good effort. Aim for more precise technical terminology and concrete examples.",
+                correctness=0.0 if item.question_index in non_answer_indexes else 7.5,
+                clarity=0.0 if item.question_index in non_answer_indexes else 7.5,
+                depth=0.0 if item.question_index in non_answer_indexes else 7.0,
+                relevance=0.0 if item.question_index in non_answer_indexes else 8.0,
+                completeness=0.0 if item.question_index in non_answer_indexes else 7.5
             ) for item in transcript
         ]
+        if non_answer_indexes:
+            default_score = round(sum(turn.score for turn in fallback_turns) / len(fallback_turns), 1)
+            category_scores = {
+                "correctness": round(sum(turn.correctness for turn in fallback_turns) / len(fallback_turns), 1),
+                "clarity": round(sum(turn.clarity for turn in fallback_turns) / len(fallback_turns), 1),
+                "depth": round(sum(turn.depth for turn in fallback_turns) / len(fallback_turns), 1),
+                "relevance": round(sum(turn.relevance for turn in fallback_turns) / len(fallback_turns), 1),
+                "completeness": round(sum(turn.completeness for turn in fallback_turns) / len(fallback_turns), 1),
+            }
+        else:
+            category_scores = {"correctness": 7.5, "clarity": 7.5, "depth": 7.0, "relevance": 8.0, "completeness": 7.5}
         return SessionEvaluationResult(
             overall_score=default_score,
             rating_label=get_rating_label(default_score),
-            category_scores={"correctness": 7.5, "clarity": 7.5, "depth": 7.0, "relevance": 8.0, "completeness": 7.5},
+            category_scores=category_scores,
             intro_evaluation=IntroductionEvaluation(
                 score=8.0,
                 structure="Clear opening summary",

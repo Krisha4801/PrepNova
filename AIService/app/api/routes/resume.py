@@ -3,6 +3,7 @@ import os
 import uuid
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from app.core.config import settings
 
 from app.services.document.pdf_parser import extract_pdf_text
 from app.services.document.ocr import ocr_pdf
@@ -100,9 +101,19 @@ async def extract_resume(
         # 5. LLM extraction
         # -------------------------
 
-        extractor = ResumeExtractor()
-
-        resume = extractor.extract(text)
+        if not settings.groq_api_key:
+            raise HTTPException(
+                status_code=503,
+                detail="Resume extraction requires GROQ_API_KEY. Add a valid key to AIService/.env or backend/.env, then restart the AI service."
+            )
+        try:
+            extractor = ResumeExtractor()
+            resume = extractor.extract(text)
+        except Exception as extract_err:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Resume text was extracted, but AI parsing failed. Check GROQ_API_KEY and the AI service logs. ({extract_err})"
+            ) from extract_err
 
         # -------------------------
         # 6. Index into ChromaDB if requested
