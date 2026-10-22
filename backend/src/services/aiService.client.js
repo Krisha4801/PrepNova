@@ -285,11 +285,66 @@ class AiServiceClient {
         jd_title: params.jdTitle || null,
         target_duration_minutes: params.targetDurationMinutes || 30,
         max_questions: params.maxQuestions || null,
+        question_count_mode: params.questionCountMode || params.question_count_mode || "6",
         focus_areas: params.focusAreas || []
       });
       return response.data;
     } catch (err) {
       throw normalizeAiServiceError(err, "Interview blueprint planning");
+    }
+  }
+
+  /**
+   * Generate a batch of primary questions for a single section
+   * @param {Object} params - { sessionId, sectionId, generationMode, plannedPrimaryQuestionCount, role, difficulty, mode, resumeId, jdId, userId, sectionObjective, competencies, alreadyAskedQuestions }
+   */
+  async generateSectionBatch(params = {}) {
+    try {
+      const response = await this.httpClient.post("/interview/section-batch", {
+        session_id: params.sessionId,
+        section_id: params.sectionId,
+        generation_mode: String(params.generationMode || "6"),
+        planned_primary_question_count: Number(params.plannedPrimaryQuestionCount || 6),
+        role: params.role || "Software Engineer",
+        difficulty: params.difficulty || "beginner",
+        mode: params.mode || null,
+        resume_id: params.resumeId || null,
+        jd_id: params.jdId || null,
+        user_id: params.userId || null,
+        section_objective: params.sectionObjective || null,
+        competencies: params.competencies || [],
+        already_asked_questions: params.alreadyAskedQuestions || []
+      });
+      return response.data;
+    } catch (err) {
+      throw normalizeAiServiceError(err, "Section batch question generation");
+    }
+  }
+
+  /**
+   * Evaluate submitted answer at runtime and decide next action (follow-up vs next primary vs transition)
+   * @param {Object} params - { sessionId, sectionId, currentQuestionId, currentQuestionText, currentQuestionObjective, submittedAnswer, isSkipped, role, difficulty, followUpsInSection, maxFollowUpsPerQuestion, remainingSectionQuestions, history }
+   */
+  async decideFollowUp(params = {}) {
+    try {
+      const response = await this.httpClient.post("/interview/decide-followup", {
+        session_id: params.sessionId,
+        section_id: params.sectionId,
+        current_question_id: params.currentQuestionId,
+        current_question_text: params.currentQuestionText,
+        current_question_objective: params.currentQuestionObjective || null,
+        submitted_answer: params.submittedAnswer || "",
+        is_skipped: Boolean(params.isSkipped),
+        role: params.role || "Software Engineer",
+        difficulty: params.difficulty || "beginner",
+        follow_ups_in_section: Number(params.followUpsInSection || 0),
+        max_follow_ups_per_question: Number(params.maxFollowUpsPerQuestion || 1),
+        remaining_section_questions: Number(params.remainingSectionQuestions || 0),
+        history: params.history || []
+      });
+      return response.data;
+    } catch (err) {
+      throw normalizeAiServiceError(err, "Runtime follow-up decision");
     }
   }
 

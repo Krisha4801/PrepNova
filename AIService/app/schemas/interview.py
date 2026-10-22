@@ -88,6 +88,13 @@ class AnswerEvaluation(BaseModel):
 # BLUEPRINT & ADAPTIVE TURN CONTRACTS (SPECIFICATION 2026)
 # =========================================================
 
+class QuestionCountMode(str, Enum):
+    COUNT_3 = "3"
+    COUNT_6 = "6"
+    COUNT_10 = "10"
+    DYNAMIC = "dynamic"
+
+
 class BlueprintSection(BaseModel):
     id: str
     type: str
@@ -95,11 +102,15 @@ class BlueprintSection(BaseModel):
     objective: str
     priority: str = "high"
     target_question_count: int = 1
+    planned_primary_question_count: int = 1
     target_minutes: float = 4.0
     difficulty: List[str] = Field(default_factory=lambda: ["beginner", "intermediate"])
     context_refs: List[str] = Field(default_factory=list)
+    competencies: List[str] = Field(default_factory=list)
+    difficulty_distribution: Dict[str, int] = Field(default_factory=dict)
     applicable: bool = True
     skip_reason: Optional[str] = None
+    completion_rules: Dict[str, Any] = Field(default_factory=dict)
 
 
 class InterviewBlueprint(BaseModel):
@@ -108,10 +119,12 @@ class InterviewBlueprint(BaseModel):
     role: str = "Candidate"
     difficulty: str = "beginner"
     target_duration_minutes: int = 30
+    question_count_mode: str = "6"
+    total_planned_primary_questions: int = 6
     sections: List[BlueprintSection] = Field(default_factory=list)
     global_rules: Dict[str, Any] = Field(
         default_factory=lambda: {
-            "maxFollowUpsPerQuestion": 2,
+            "maxFollowUpsPerQuestion": 1,
             "avoidSemanticDuplicates": True,
             "evaluateOnlyAfterCompletion": True
         }
@@ -129,7 +142,113 @@ class PlanBlueprintRequest(BaseModel):
     jd_title: Optional[str] = None
     target_duration_minutes: int = 30
     max_questions: Optional[int] = None
+    question_count_mode: Optional[str] = "6"
     focus_areas: List[str] = Field(default_factory=list)
+
+
+# =========================================================
+# SECTION-WISE BATCH QUESTION GENERATION SCHEMAS
+# =========================================================
+
+class SectionBatchQuestion(BaseModel):
+    questionId: str = Field(alias="question_id", default="")
+    sectionId: str = Field(alias="section_id", default="")
+    order: int = 1
+    type: str = "primary"
+    objective: str = ""
+    difficulty: str = "beginner"
+    text: str = ""
+    contextReferences: List[str] = Field(alias="context_references", default_factory=list)
+    status: str = "pending"  # "pending", "asked", "answered", "skipped"
+
+    model_config = {
+        "populate_by_name": True,
+        "serialize_by_alias": True
+    }
+
+
+class SectionBatchRequest(BaseModel):
+    sessionId: str = Field(alias="session_id")
+    sectionId: str = Field(alias="section_id")
+    generationMode: str = Field(alias="generation_mode", default="6")
+    plannedPrimaryQuestionCount: int = Field(alias="planned_primary_question_count", default=6)
+    role: str = "Software Engineer"
+    difficulty: str = "beginner"
+    mode: Optional[str] = None
+    resumeId: Optional[str] = Field(alias="resume_id", default=None)
+    jdId: Optional[str] = Field(alias="jd_id", default=None)
+    userId: Optional[str] = Field(alias="user_id", default=None)
+    sectionObjective: Optional[str] = Field(alias="section_objective", default=None)
+    competencies: List[str] = Field(default_factory=list)
+    alreadyAskedQuestions: List[str] = Field(alias="already_asked_questions", default_factory=list)
+
+    model_config = {
+        "populate_by_name": True,
+        "serialize_by_alias": True
+    }
+
+
+class SectionBatchResponse(BaseModel):
+    sectionId: str = Field(alias="section_id")
+    generationMode: str = Field(alias="generation_mode", default="6")
+    plannedPrimaryQuestionCount: int = Field(alias="planned_primary_question_count", default=6)
+    questions: List[SectionBatchQuestion] = Field(default_factory=list)
+    generationVersion: int = Field(alias="generation_version", default=1)
+
+    model_config = {
+        "populate_by_name": True,
+        "serialize_by_alias": True
+    }
+
+
+# =========================================================
+# RUNTIME POST-ANSWER FOLLOW-UP SCHEMAS
+# =========================================================
+
+class RuntimeFollowUp(BaseModel):
+    type: str = "follow_up"
+    parentQuestionId: str = Field(alias="parent_question_id")
+    sectionId: str = Field(alias="section_id")
+    objective: str = ""
+    text: str
+    contextReferences: List[str] = Field(alias="context_references", default_factory=list)
+
+    model_config = {
+        "populate_by_name": True,
+        "serialize_by_alias": True
+    }
+
+
+class FollowUpDecisionRequest(BaseModel):
+    sessionId: str = Field(alias="session_id")
+    sectionId: str = Field(alias="section_id")
+    currentQuestionId: str = Field(alias="current_question_id")
+    currentQuestionText: str = Field(alias="current_question_text")
+    currentQuestionObjective: Optional[str] = Field(alias="current_question_objective", default=None)
+    submittedAnswer: str = Field(alias="submitted_answer", default="")
+    isSkipped: bool = Field(alias="is_skipped", default=False)
+    role: str = "Software Engineer"
+    difficulty: str = "beginner"
+    followUpsInSection: int = Field(alias="follow_ups_in_section", default=0)
+    maxFollowUpsPerQuestion: int = Field(alias="max_follow_ups_per_question", default=1)
+    remainingSectionQuestions: int = Field(alias="remaining_section_questions", default=0)
+    history: List[Dict[str, Any]] = Field(default_factory=list)
+
+    model_config = {
+        "populate_by_name": True,
+        "serialize_by_alias": True
+    }
+
+
+class FollowUpDecisionResponse(BaseModel):
+    action: str  # "FOLLOW_UP", "NEXT_PRIMARY", "NEXT_SECTION", "COMPLETE"
+    followUp: Optional[RuntimeFollowUp] = Field(alias="follow_up", default=None)
+    reason: Optional[str] = None
+
+    model_config = {
+        "populate_by_name": True,
+        "serialize_by_alias": True
+    }
 
 
 class NextTurnRequest(BaseModel):

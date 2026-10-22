@@ -21,6 +21,40 @@ const QuestionItemSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const SectionBatchQuestionSchema = new mongoose.Schema(
+  {
+    questionId: { type: String, required: true },
+    sectionId: { type: String, required: true },
+    order: { type: Number, default: 1 },
+    type: { type: String, enum: ["primary", "follow_up"], default: "primary" },
+    objective: { type: String, default: "" },
+    difficulty: { type: String, default: "beginner" },
+    text: { type: String, required: true },
+    contextReferences: { type: [String], default: [] },
+    status: {
+      type: String,
+      enum: ["pending", "asked", "answered", "skipped"],
+      default: "pending"
+    }
+  },
+  { _id: false }
+);
+
+const SectionBatchSchema = new mongoose.Schema(
+  {
+    sectionId: { type: String, required: true },
+    generationMode: {
+      type: String,
+      enum: ["3", "6", "10", "dynamic"],
+      default: "6"
+    },
+    plannedPrimaryQuestionCount: { type: Number, default: 6 },
+    generationVersion: { type: Number, default: 1 },
+    questions: { type: [SectionBatchQuestionSchema], default: [] }
+  },
+  { _id: false }
+);
+
 const AnswerItemSchema = new mongoose.Schema(
   {
     questionIndex: { type: Number, required: true },
@@ -151,6 +185,27 @@ const InterviewSessionSchema = new mongoose.Schema(
     blueprint: {
       type: mongoose.Schema.Types.Mixed,
       default: null
+    },
+    questionCountMode: {
+      type: String,
+      enum: ["3", "6", "10", "dynamic"],
+      default: "6"
+    },
+    currentSectionId: {
+      type: String,
+      default: "introduction"
+    },
+    currentBatchQuestionIndex: {
+      type: Number,
+      default: 0
+    },
+    plannedSectionCounts: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {}
+    },
+    sectionBatches: {
+      type: [SectionBatchSchema],
+      default: []
     },
     totalQuestions: {
       type: Number,
