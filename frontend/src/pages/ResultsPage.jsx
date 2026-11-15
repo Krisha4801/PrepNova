@@ -9,7 +9,8 @@ import {
   Sparkles, 
   ArrowRight, 
   ChevronRight, 
-  LayoutDashboard, 
+  LayoutDashboard,
+  Layers, 
   ShieldCheck, 
   BookOpen, 
   Target,
@@ -138,6 +139,9 @@ export default function ResultsPage() {
 
   const introEvaluation = report?.introEvaluation || null;
   const sectionSummaries = report?.sectionSummaries || {};
+  const practiceMode = report?.practiceMode || stateData.practiceMode || localStorage.getItem('prepnova_practice_mode') || 'complete';
+  const selectedSections = report?.selectedSections || stateData.selectedSections || [];
+  const sectionWiseEvaluations = report?.sectionWiseEvaluations || report?.finalReport?.sectionWiseEvaluations || stateData.sectionWiseEvaluations || null;
 
   const strengths = report?.strengths?.length
     ? report.strengths
@@ -295,9 +299,21 @@ ${preparationPlan.map((p, i) => `${i + 1}. ${p}`).join('\n')}
               <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
                 {role} Scorecard
               </h2>
-              <p className="text-xs sm:text-sm text-slate-300">
-                Tier: <span className="capitalize font-semibold">{difficulty}</span> • Duration: <span className="font-mono">{durationText}</span> • {questionsCount}/{totalQuestions} questions completed
-              </p>
+              <div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
+                <span className="capitalize font-semibold text-slate-300">Tier: {difficulty}</span>
+                <span className="text-slate-400">•</span>
+                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold ${
+                  practiceMode === 'selected_sections'
+                    ? 'bg-purple-900/60 text-purple-300 border border-purple-700/50'
+                    : 'bg-emerald-900/60 text-emerald-300 border border-emerald-700/50'
+                }`}>
+                  {practiceMode === 'selected_sections' ? `Selected Sections (${selectedSections.length || 'Custom'})` : 'Complete Interview'}
+                </span>
+                <span className="text-slate-400">•</span>
+                <span className="text-slate-300 font-mono">{durationText}</span>
+                <span className="text-slate-400">•</span>
+                <span className="text-slate-300">{questionsCount}/{totalQuestions} questions completed</span>
+              </div>
             </div>
 
             {/* Big Score Badge */}
@@ -415,6 +431,150 @@ ${preparationPlan.map((p, i) => `${i + 1}. ${p}`).join('\n')}
             </div>
           </div>
         </div>
+
+        {/* Section-by-Section Performance Breakdown */}
+        {((sectionWiseEvaluations && Object.keys(sectionWiseEvaluations).length > 0) || (sectionSummaries && Object.keys(sectionSummaries).length > 0)) && (
+          <div className="panel-card space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-indigo-100 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
+                  <Layers className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                    Section-by-Section Performance Breakdown
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Granular topic evaluations, strengths, weaknesses, and improvement suggestions
+                  </p>
+                </div>
+              </div>
+              <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 self-start sm:self-auto">
+                {practiceMode === 'selected_sections' ? 'Practice Mode: Specific Sections' : 'Full Interview Flow'}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {sectionWiseEvaluations && Object.keys(sectionWiseEvaluations).length > 0
+                ? Object.entries(sectionWiseEvaluations).map(([secId, secData]) => {
+                    const secScore = Math.round(Number(secData.score || 0) * 10);
+                    return (
+                      <div
+                        key={secId}
+                        className="p-5 rounded-2xl bg-slate-50/70 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 space-y-4 hover:border-indigo-300 dark:hover:border-indigo-800 transition-all shadow-sm"
+                      >
+                        {/* Header */}
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                              Topic Section
+                            </span>
+                            <h4 className="text-sm font-bold text-slate-900 dark:text-white mt-0.5">
+                              {secData.sectionName || secId.replace(/^custom_/i, '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
+                            </h4>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-extrabold ${
+                              secScore >= 75
+                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300'
+                                : secScore >= 60
+                                ? 'bg-blue-100 text-blue-800 dark:bg-blue-950/80 dark:text-blue-300'
+                                : 'bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300'
+                            }`}>
+                              {secScore}%
+                            </span>
+                            <span className="block text-[10px] text-slate-400 mt-0.5">
+                              {secData.answeredCount || secData.questionCount || 1} Question{(secData.questionCount || 1) > 1 ? 's' : ''}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Progress Bar */}
+                        <div className="w-full bg-slate-200 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all duration-500 ${
+                              secScore >= 75 ? 'bg-emerald-500' : secScore >= 60 ? 'bg-indigo-600' : 'bg-amber-500'
+                            }`}
+                            style={{ width: `${Math.max(5, Math.min(100, secScore))}%` }}
+                          />
+                        </div>
+
+                        {/* Summary */}
+                        {secData.summary && (
+                          <p className="text-xs text-slate-600 dark:text-slate-300 italic bg-white dark:bg-slate-950/60 p-2.5 rounded-xl border border-slate-200/60 dark:border-slate-800/60 leading-relaxed">
+                            "{secData.summary}"
+                          </p>
+                        )}
+
+                        {/* Strengths */}
+                        {secData.strengths && secData.strengths.length > 0 && (
+                          <div className="space-y-1.5">
+                            <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider block">
+                              Strengths
+                            </span>
+                            <ul className="space-y-1 text-xs text-slate-600 dark:text-slate-300">
+                              {secData.strengths.map((str, sIdx) => (
+                                <li key={sIdx} className="flex items-start gap-1.5">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0 mt-1.5" />
+                                  <span>{str}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {/* Weaknesses */}
+                        {secData.weaknesses && secData.weaknesses.length > 0 && (
+                          <div className="space-y-1.5">
+                            <span className="text-[11px] font-bold text-amber-700 dark:text-amber-400 uppercase tracking-wider block">
+                              Areas to Improve
+                            </span>
+                            <ul className="space-y-1 text-xs text-slate-600 dark:text-slate-300">
+                              {secData.weaknesses.map((w, wIdx) => (
+                                <li key={wIdx} className="flex items-start gap-1.5">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0 mt-1.5" />
+                                  <span>{w}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {/* Improvement Suggestions */}
+                        {secData.improvementSuggestions && secData.improvementSuggestions.length > 0 && (
+                          <div className="space-y-1.5 pt-1 border-t border-slate-200/60 dark:border-slate-800/60">
+                            <span className="text-[11px] font-bold text-indigo-700 dark:text-indigo-400 uppercase tracking-wider block">
+                              Actionable Suggestions
+                            </span>
+                            <ul className="space-y-1 text-xs text-slate-600 dark:text-slate-300">
+                              {secData.improvementSuggestions.map((sug, sgIdx) => (
+                                <li key={sgIdx} className="flex items-start gap-1.5">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0 mt-1.5" />
+                                  <span className="font-medium text-slate-700 dark:text-slate-200">{sug}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                : Object.entries(sectionSummaries).map(([secId, summaryVal]) => (
+                    <div
+                      key={secId}
+                      className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 space-y-2"
+                    >
+                      <h4 className="text-sm font-bold text-slate-900 dark:text-white capitalize">
+                        {secId.replace(/_/g, ' ')}
+                      </h4>
+                      <p className="text-xs text-slate-600 dark:text-slate-300">
+                        {typeof summaryVal === 'string' ? summaryVal : summaryVal?.summary || 'Section completed.'}
+                      </p>
+                    </div>
+                  ))}
+            </div>
+          </div>
+        )}
 
         {/* Strengths and Next Practice Action Items */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">

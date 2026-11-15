@@ -27,6 +27,9 @@ export default function InterviewResults() {
   const format = stateData.format || 'Voice';
   const totalQuestions = stateData.totalQuestions || 6;
   const rawAnswers = stateData.answers || {};
+  const practiceMode = stateData.practiceMode || localStorage.getItem('prepnova_practice_mode') || 'complete';
+  const selectedSections = stateData.selectedSections || [];
+  const sectionWiseEvaluations = stateData.sectionWiseEvaluations || null;
 
   // Compute dynamic score or use evaluated session score
   const answeredCount = Object.values(rawAnswers).filter(a => a?.answer && !a?.skipped && a?.answer !== '[Question Skipped]').length;
@@ -97,7 +100,7 @@ export default function InterviewResults() {
                 AI Evaluation Complete
               </span>
               <span className="text-[12px] text-[#64748B] dark:text-[#94A3B8]">
-                {format === 'voice' ? '🎙 Voice Session' : '💬 Text Assessment'} • {difficulty}
+                {format === 'voice' ? '🎙 Voice Session' : '💬 Text Assessment'} • {difficulty} • {practiceMode === 'selected_sections' ? `Selected Sections (${selectedSections.length || 'Custom'})` : 'Complete Interview'}
               </span>
             </div>
             <h1 className="text-[28px] sm:text-[32px] font-bold text-[#0F172A] dark:text-[#F8FAFC] tracking-tight leading-[1.3]">

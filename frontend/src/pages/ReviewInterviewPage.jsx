@@ -46,6 +46,8 @@ export default function ReviewInterviewPage() {
   const questionCount = location.state?.questionCount || localStorage.getItem('prepnova_question_count') || '6';
   const interviewMode = location.state?.interviewMode || localStorage.getItem('prepnova_mode') || 'Text';
   const selectedSkills = location.state?.selectedSkills || JSON.parse(localStorage.getItem('prepnova_skills') || '[]');
+  const practiceMode = location.state?.practiceMode || localStorage.getItem('prepnova_practice_mode') || 'complete';
+  const selectedSections = location.state?.selectedSections || JSON.parse(localStorage.getItem('prepnova_selected_sections') || '[]');
 
   const resumePermittedModes = ['resume', 'resume_jd', 'resume_role', 'resume_jd_role'];
   const jdPermittedModes = ['jd', 'resume_jd', 'role_jd', 'resume_jd_role'];
@@ -113,6 +115,8 @@ export default function ReviewInterviewPage() {
           jdId: jdId || null,
           questionCountMode: String(questionCount),
           maxQuestions: String(questionCount).toLowerCase() === 'dynamic' ? null : Number(questionCount),
+          practiceMode,
+          selectedSections,
           focusAreas: selectedSkills
         })
       });
@@ -131,6 +135,8 @@ export default function ReviewInterviewPage() {
             interviewMode,
             sessionId: data.sessionId,
             firstQuestion: data.question,
+            practiceMode: data.practiceMode || practiceMode,
+            selectedSections: data.selectedSections || selectedSections,
             resumeId,
             jdId
           }
@@ -258,6 +264,19 @@ export default function ReviewInterviewPage() {
             </div>
 
             <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800">
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Practice Scope</span>
+              <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold ${
+                  practiceMode === 'selected_sections' 
+                    ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800' 
+                    : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                }`}>
+                  {practiceMode === 'selected_sections' ? `Selected Topics (${selectedSections.length})` : 'Complete Interview'}
+                </span>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800">
               <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Context Mode</span>
               <span className="text-sm font-bold text-slate-900 dark:text-slate-100 mt-1 block capitalize">
                 {mode ? mode.replace(/_/g, ' + ') : 'Auto-detected'}
@@ -294,6 +313,34 @@ export default function ReviewInterviewPage() {
               </div>
             )}
           </div>
+
+          {practiceMode === 'selected_sections' && selectedSections.length > 0 && (
+            <div className="p-4 rounded-2xl bg-indigo-50/50 dark:bg-indigo-950/20 border border-indigo-200/60 dark:border-indigo-900/40 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-indigo-900 dark:text-indigo-300 uppercase tracking-wider">
+                  Targeted Practice Sections ({selectedSections.length})
+                </span>
+                <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Questions will focus exclusively on these topics
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {selectedSections.map((sec, idx) => (
+                  <span
+                    key={sec.id || idx}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 border border-indigo-200/80 dark:border-indigo-800/60 shadow-sm"
+                  >
+                    <span>{sec.name || sec.title || sec.id}</span>
+                    {sec.isCustom && (
+                      <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                        Custom
+                      </span>
+                    )}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* AI Explainable Fit Assessment Panel */}
           <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-gradient-to-b from-slate-50/60 to-slate-100/30 dark:from-slate-900/50 dark:to-slate-900/20 p-5 space-y-4">

@@ -11,8 +11,26 @@ function formatSection(sectionId) {
     technical_concepts: 'Technical Concepts',
     scenario: 'Scenario',
     behavioral: 'Behavioral',
+    scenario_based: 'Scenario-Based Questions',
+    general_hr: 'General Interview & HR',
+    programming_fundamentals: 'Programming Fundamentals & OOP',
+    dsa: 'Data Structures & Algorithms',
+    javascript: 'JavaScript',
+    react_frontend: 'React.js & Frontend',
+    nodejs_backend: 'Node.js & Backend',
+    fullstack: 'Full Stack Development',
+    dbms_sql: 'DBMS & SQL',
+    os: 'Operating Systems',
+    networks: 'Computer Networks',
+    system_design: 'System Design & Architecture',
+    ai_ml_rag: 'AI, ML, LLM & RAG',
+    cloud_devops: 'Cloud & DevOps',
+    cybersecurity: 'Cybersecurity',
+    testing_qa: 'Software Engineering & Testing',
+    java_spring: 'Java & Spring Boot',
+    php_laravel: 'PHP & Laravel'
   };
-  return map[sectionId] || sectionId.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  return map[sectionId] || sectionId.replace(/^custom_/i, '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 /**

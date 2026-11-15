@@ -1,6 +1,8 @@
 # PrepNova
 
-PrepNova is a modern, AI-powered mock interview simulator and technical preparation workspace featuring a Node.js/Express backend, MongoDB persistence, a Python FastAPI AI extraction microservice, and a responsive React frontend styled with modern SaaS design tokens.
+PrepNova is an enterprise-grade, AI-powered mock interview simulator and technical preparation workspace featuring a Node.js/Express backend, MongoDB persistence, a Python FastAPI AI extraction & LangGraph microservice, and a responsive React frontend styled with modern SaaS design tokens.
+
+PrepNova supports both **Complete Comprehensive Mock Interviews** (covering behavioral, project ownership, core skills, technical concepts, workplace scenarios, and HR) and **Section-Based Interview Practice** (hyper-targeted preparation across 17 curated technical categories and custom candidate-defined topics).
 
 ---
 
@@ -8,11 +10,12 @@ PrepNova is a modern, AI-powered mock interview simulator and technical preparat
 
 | Component | Status | Operational Port / Service | Verification |
 | :--- | :--- | :--- | :--- |
-| **Authentication & Authz** | **PRODUCTION-READY** | `http://localhost:5000/api/auth` | 69 Passing Tests (OAuth 2.0 PKCE, OIDC Nonce, JWT, User Deletion 401, Logout Revocation, Role Guards) |
-| **Database Persistence** | **REAL / CONNECTED** | `mongodb://127.0.0.1:27017/prepnova` | Mongoose `User` model, OAuth provider linking, fail-fast buffering protection |
-| **Node.js Interview Engine** | **HYBRID / FUNCTIONAL** | `http://localhost:5000/api/interview` | Dynamic question generation with questionBank rubrics & Groq fallback |
-| **FastAPI AI Microservice** | **STANDALONE REAL** | `http://127.0.0.1:8000` | LangChain / Groq / PyMuPDF OCR (not yet invoked by Node backend) |
-| **Frontend Web App** | **PRODUCTION-READY** | `http://127.0.0.1:5173` | Modern SaaS design system, real backend API integration, Vite build pass |
+| **Authentication & Authz** | **PRODUCTION-READY** | `http://localhost:5000/api/auth` | OAuth 2.0 PKCE (`S256`), OIDC Nonce, JWT, User Deletion Invalidation, Logout Revocation, Role Guards |
+| **Database Persistence** | **REAL / CONNECTED** | `mongodb://127.0.0.1:27017/prepnova` | Mongoose `User`, `InterviewSession`, `Resume`, `JobDescription` models |
+| **Node.js Interview Engine** | **REAL / CONNECTED** | `http://localhost:5000/api/interview` | Blueprint planning, section batch generation, runtime follow-ups, and post-session batch evaluation |
+| **FastAPI AI Microservice** | **REAL / CONNECTED** | `http://127.0.0.1:8000` | LangGraph workflow, Groq LLM, ChromaDB vector store, PyMuPDF / OCR document extraction |
+| **Section-Based Practice** | **PRODUCTION-READY** | `http://127.0.0.1:5173/customize` | 17-category library, custom topics, smart recommender, scenario outage generation, section-wise scorecards |
+| **Frontend Web App** | **PRODUCTION-READY** | `http://127.0.0.1:5173` | Modern SaaS design system, real backend API integration, Vite production build pass (0 errors) |
 
 ---
 
@@ -25,31 +28,97 @@ The following table documents the audited status of every feature in the PrepNov
 | **User Registration** | IMPLEMENTED | REAL | Yes | Yes | MongoDB (`User`) | N/A | `backend/src/controllers/auth.controller.js`, `models/User.js` |
 | **Password Hashing** | IMPLEMENTED | REAL (bcrypt 10 rounds) | Yes | Yes | MongoDB (`password` hash) | N/A | `backend/src/services/auth.service.js` |
 | **User Login & JWT** | IMPLEMENTED | REAL (HS256 signed JWT) | Yes | Yes | MongoDB (`User.findOne`) | N/A | `backend/src/utils/jwt.js`, `controllers/auth.controller.js` |
-| **Auth Middleware** | IMPLEMENTED | REAL | Yes | Yes | N/A | N/A | `backend/src/middleware/auth.middleware.js` |
-| **Role Authorization** | IMPLEMENTED | REAL | Yes | Yes | N/A | N/A | `backend/src/middleware/authorize.middleware.js` |
-| **User Isolation** | IMPLEMENTED | REAL | Yes | Yes | Scoped to `req.user.id` | N/A | `backend/src/controllers/interview.controller.js` |
-| **Auth Rate Limiting** | IMPLEMENTED | REAL | Yes | Yes | In-memory IP window | N/A | `backend/src/middleware/rateLimiter.middleware.js` |
-| **Interview Generation** | IMPLEMENTED | HYBRID | Yes | Yes | Memory session cache | Groq fallback + local rubrics | `backend/src/services/llm.service.js`, `questionBank.service.js` |
-| **Answer Scoring** | IMPLEMENTED | HYBRID | Yes | Yes | Memory session cache | Keyword rubrics + Groq evaluation | `backend/src/services/llm.service.js` |
-| **FastAPI Resume Extract**| IMPLEMENTED | REAL (Standalone) | No (Direct) | No (Unconnected) | N/A | LangChain + ChatGroq + PyMuPDF | `AIService/services/resume_extractor.py` |
-| **FastAPI JD Extract** | IMPLEMENTED | REAL (Standalone) | No (Direct) | No (Unconnected) | N/A | LangChain + ChatGroq + Pydantic | `AIService/services/jd_extractor.py` |
-| **RAG / Vector Store** | PROTOTYPE | PARTIAL (Offline) | No | No (Unconnected) | Local Chroma/ChromaDB script | Sentence-Transformers | `backend/rag/search.py` |
-| **Candidate Dashboard**| IMPLEMENTED | REAL + HONEST | Yes | Yes | Auth Profile & Real Sessions | N/A | `frontend/src/pages/Dashboard.jsx` |
-| **Scorecard Reports** | IMPLEMENTED | REAL | Yes | Yes | Passed from completed session | Rubric score breakdown | `frontend/src/pages/ResultsPage.jsx` |
-| **History Table** | IMPLEMENTED | HYBRID | Yes | Yes | localStorage + Session buffer | N/A | `frontend/src/components/history/HistoryTable.jsx` |
-| **Theme System** | IMPLEMENTED | REAL | Yes | N/A | LocalStorage persistence | N/A | `frontend/src/context/ThemeContext.jsx` |
+| **Auth Middleware** | IMPLEMENTED | REAL | Yes | Yes | Scoped to active DB user | N/A | `backend/src/middleware/auth.middleware.js` |
+| **Role Authorization** | IMPLEMENTED | REAL | Yes | Yes | Role check on user record | N/A | `backend/src/middleware/authorize.middleware.js` |
+| **Password Reset (OTP)**| IMPLEMENTED | REAL (Crypto OTP + Email) | Yes | Yes | MongoDB (SHA-256 hash) | N/A | `backend/src/controllers/auth.controller.js`, `services/email.service.js` |
+| **Google OAuth 2.0 / OIDC**| IMPLEMENTED | REAL (PKCE + Nonce) | Yes | Yes | MongoDB (`authProviders`) | N/A | `backend/src/oauth/*`, `controllers/oauth.controller.js` |
+| **Section-Based Practice**| IMPLEMENTED | REAL | Yes | Yes | MongoDB (`InterviewSession`) | LangGraph + Section Batches | `frontend/src/components/interview/setup/SectionSelector.jsx`, `backend/src/controllers/interview.controller.js` |
+| **Categorized Library** | IMPLEMENTED | REAL (17 Topics) | Yes | Yes | Section library schemas | Context retrieval query map | `frontend/src/constants/sections.js`, `AIService/app/services/interview/graph.py` |
+| **Custom Section Topics**| IMPLEMENTED | REAL | Yes | Yes | MongoDB (`selectedSections`) | Dynamic LLM topic generation | `frontend/src/components/interview/setup/SectionSelector.jsx`, `AIService/app/services/interview/graph.py` |
+| **Section Recommender** | IMPLEMENTED | REAL | Yes | Client Engine | Analyzes Role, Resume & JD | Deterministic skill matching | `frontend/src/lib/sectionRecommender.js` |
+| **AI Question Generation**| IMPLEMENTED | REAL | Yes | Yes | MongoDB (`InterviewSession`) | LangGraph batch engine | `backend/src/services/aiService.client.js`, `AIService/app/services/interview/graph.py` |
+| **Workplace Scenarios** | IMPLEMENTED | REAL | Yes | Yes | MongoDB (`questions`) | Production incident prompts | `AIService/app/services/interview/graph.py` |
+| **Section-Wise Evaluation**| IMPLEMENTED| REAL | Yes | Yes | MongoDB (`finalReport`) | Batch LLM + fallback rubrics | `backend/src/controllers/interview.controller.js`, `frontend/src/pages/ResultsPage.jsx` |
+| **Candidate Dashboard** | IMPLEMENTED | REAL | Yes | Yes | Auth Profile & Real Sessions | N/A | `frontend/src/pages/Dashboard.jsx` |
+| **Scorecard Reports** | IMPLEMENTED | REAL | Yes | Yes | MongoDB (`InterviewSession`) | 5-dimension rubric breakdown | `frontend/src/pages/ResultsPage.jsx` |
+| **History & Mode Filter**| IMPLEMENTED | REAL | Yes | Yes | MongoDB (`InterviewSession`) | Mode-aware history | `frontend/src/pages/History.jsx`, `frontend/src/components/history/HistoryTable.jsx` |
+| **FastAPI Resume Extract**| IMPLEMENTED | REAL | Yes | Yes | MongoDB (`Resume`) | LangChain + ChatGroq + PyMuPDF | `AIService/app/api/routes/resume.py`, `backend/src/services/aiService.client.js` |
+| **FastAPI JD Extract** | IMPLEMENTED | REAL | Yes | Yes | MongoDB (`JobDescription`) | LangChain + ChatGroq + Pydantic | `AIService/app/api/routes/jd.py`, `backend/src/services/aiService.client.js` |
+| **RAG / Vector Store** | IMPLEMENTED | REAL | Yes | Yes | ChromaDB Vector Store | Sentence-Transformers | `AIService/app/services/vectorstore/chroma_store.py` |
 
 ---
 
-## AI Integration Verification
+## Section-Based Interview Practice
 
-| Component | Provider / Tool | Implementation State | Description & Code Verification |
-| :--- | :--- | :--- | :--- |
-| **Node.js LLM Service** | Groq API (`openai/gpt-oss-120b`) | **REAL** | `backend/src/services/llm.service.js` directly calls `https://api.groq.com/openai/v1/chat/completions` using Axios when `GROQ_API_KEY` is provided. |
-| **Question Bank Fallback** | Deterministic Rubric Engine | **REAL** | `backend/src/services/questionBank.service.js` maps roles (`Frontend`, `Backend`, `HR`, `Full Stack`, `Data Analyst`) and difficulties (`easy`, `medium`, `hard`) to comprehensive questions and evaluation rubrics when offline. |
-| **FastAPI AI Microservice** | FastAPI, LangChain, ChatGroq, PyMuPDF, Tesseract | **REAL (Internal)** | `AIService/main.py` exposes `/resume/extract` and `/jd/extract`. Uses `ChatGroq(model_name="llama-3.3-70b-versatile")` with Pydantic structured output parsers (`ResumeData`, `JobDescriptionData`). |
-| **Node ↔ FastAPI Link** | HTTP / Axios | **NOT YET CONNECTED** | `backend/` does not currently make HTTP requests to `http://localhost:8000`. The Node backend uses its internal `llm.service.js`. |
-| **RAG Pipeline** | Python Chroma / SentenceTransformers | **PROTOTYPE / UNCONNECTED** | `backend/rag/search.py` exists as a prototype script but is not active in the runtime request path of the Express backend. |
+PrepNova's Section-Based Interview Practice allows candidates to prepare for specific technical topics and realistic workplace challenges without running through a full 7-section interview.
+
+```mermaid
+flowchart LR
+    A["Interview Setup (/customize)"] --> B{"Practice Mode"}
+    B -- "Complete Interview" --> C["Full 7-Section Blueprint
+(Intro, Projects, Experience, Skills, Tech, Scenario, HR)"]
+    B -- "Selected Sections" --> D["Topic Selection
+(17 Categories + Custom Topics)"]
+    D --> E["Intelligent Recommender
+(Role + Resume + JD Match)"]
+    E --> F["Review & Launch (/review)"]
+    C --> F
+    F --> G["Section-Aware Question Batch Generation
+(LangGraph Engine)"]
+    G --> H["Live Interview (/interview/:id)
+(Section Tracker & Progress)"]
+    H --> I["Section-Wise Evaluation (/results/:id)
+(Scores, Strengths, Weaknesses, Suggestions)"]
+    I --> J["History Table (/history)
+(Mode Badges & Filter)"]
+```
+
+### Key Capabilities
+
+1. **Dual Practice Modes**:
+   - **Complete Interview**: Standard comprehensive flow covering introduction, projects, skills, technical fundamentals, scenarios, and behavioral questions.
+   - **Selected Sections**: Focuses exclusively on topics chosen by the candidate, perfectly calibrated for targeted cramming or pre-interview skill sharpening.
+
+2. **Large Categorized Section Library (17 Technical Categories)**:
+   - General Interview & HR
+   - Scenario-Based Questions (production outages, cascading failures, scaling crises)
+   - Programming Fundamentals & OOP
+   - Data Structures & Algorithms (DSA)
+   - JavaScript (event loop, closures, V8 internals)
+   - React.js & Frontend (virtual DOM, reconciliation, state management)
+   - Node.js & Backend (libuv, streams, clustering, backpressure)
+   - Full Stack Development (end-to-end architecture, caching tiers, auth)
+   - DBMS & SQL (ACID, indexing, isolation levels, sharding)
+   - Operating Systems (processes, threads, paging, IPC)
+   - Computer Networks (TCP/IP, TLS 1.3, HTTP/2 & HTTP/3, DNS)
+   - System Design & Architecture (distributed systems, Kafka, rate limiting)
+   - AI, ML, LLM & RAG (embeddings, chunking, retrieval evaluation)
+   - Cloud & DevOps (Docker, Kubernetes, Terraform IaC, CI/CD)
+   - Cybersecurity (OWASP Top 10, XSS, CSRF, zero-trust)
+   - Software Engineering & Testing (TDD, test doubles, Testcontainers)
+   - Java & Spring Boot (JVM memory, IoC, Spring Security, Hibernate)
+   - PHP & Laravel (service container, Eloquent ORM, queues)
+
+3. **Multi-Selection & Custom Topics**:
+   - Multi-select with removable active chips.
+   - Instant search and category filter pills.
+   - Select All / Clear All convenience actions.
+   - Dynamic custom section creation: users can type any arbitrary topic (e.g. "GraphQL Performance", "Solana Smart Contracts") with full AI question generation support.
+
+4. **Intelligent Recommendations Engine**:
+   - Analyzes target role, parsed resume skills, and job description requirements.
+   - Suggests top relevant sections with a 1-click "Apply Recommendations" option without restricting the user's manual selection.
+
+5. **Realistic Workplace & Outage Scenarios**:
+   - When **Scenario-Based Questions** is selected, questions are dynamically framed around real-world production outages, cascading failures, high-concurrency race conditions, and database deadlocks.
+
+6. **Section-Wise Scorecard Breakdown**:
+   - Results page renders a dedicated **Section-by-Section Performance Breakdown** panel.
+   - For every section practiced: section score, progress bar, category rubrics (correctness, clarity, depth, relevance, completeness), strengths, weaknesses, and targeted improvement suggestions.
+
+7. **Mode-Aware Interview History**:
+   - Displays clear badges identifying "Complete Interview" vs "Selected Sections" (with topic chips).
+   - Includes dropdown filtering by practice mode ("All Modes", "Complete Interview", "Selected Sections").
 
 ---
 
@@ -59,45 +128,55 @@ The following table documents the audited status of every feature in the PrepNov
 flowchart TD
     subgraph Client ["Frontend Client (Port 5173 - React + Vite)"]
         UI[Workspace & Public UI]
+        Setup[CustomizeInterviewPage - Mode Selector & Library]
+        Selector[SectionSelector - Chips, Filters & Custom Topics]
+        LiveInt[QuestionPanel - Section Badges & Pacing]
+        Scorecard[ResultsPage - Section Breakdown & Radar]
+        HistView[HistoryTable - Mode Badges & Filters]
         AuthContext[AuthContext - Bearer Token]
-        ThemeContext[ThemeContext - Dark/Light System]
     end
 
     subgraph NodeBackend ["Node.js / Express Backend (Port 5000)"]
         Router[Express API Router]
-        RateLimiter[Auth Rate Limiter Middleware]
-        Validator[Auth Request Validator]
-        AuthCtrl[Auth Controller & Service]
-        AuthMiddleware[JWT Auth Middleware]
-        AuthzMiddleware[Role Authz Middleware]
-        IntCtrl[Interview Controller]
-        LLMService[LLM Service - Groq & Rubrics]
+        Validator[interview.validator.js - Section & Mode Validation]
+        IntCtrl[interview.controller.js - Session Orchestrator]
+        AIClient[aiService.client.js - HTTP Client]
+        AuthCtrl[Auth Controller & OAuth Service]
     end
 
     subgraph Database ["MongoDB (Port 27017)"]
         UserModel[(User Collection)]
+        SessionModel[(InterviewSession Collection
+practiceMode, selectedSections, sectionWiseEvaluations)]
+        ResumeModel[(Resume Collection)]
+        JDModel[(JobDescription Collection)]
     end
 
     subgraph AIServiceNode ["FastAPI AI Microservice (Port 8000)"]
-        LangChainCore[LangChain + ChatGroq Engine]
-        PDFExtractor[PyMuPDF / OCR Parser]
-        Schemas[Pydantic Structured Schemas]
+        LangGraphCore[LangGraph Question & Turn Engine]
+        BlueprintPlanner[plan_interview_blueprint - Section Calibration]
+        BatchGenerator[generate_section_batch - Topic Scoping & Scenarios]
+        FollowUpEngine[decide_runtime_follow_up - Section Context]
+        SessionEvaluator[evaluate_full_session - Holistic Scorecard]
+        ChromaStore[ChromaDB Vector Store & Embeddings]
     end
 
     %% Client requests
-    UI -- "POST /api/auth/register, /login" --> RateLimiter
-    RateLimiter --> Validator --> AuthCtrl
-    AuthCtrl -- "Bcrypt Hash & Query" --> UserModel
-    AuthCtrl -- "Signed JWT Token" --> AuthContext
+    Setup --> Selector --> IntCtrl
+    LiveInt --> IntCtrl
+    Scorecard --> IntCtrl
+    HistView --> IntCtrl
 
-    UI -- "Bearer <JWT_TOKEN>" --> AuthMiddleware
-    AuthMiddleware -- "Attach req.user (id, email, role)" --> AuthzMiddleware
-    AuthzMiddleware --> IntCtrl
-    IntCtrl -- "Evaluate & Generate" --> LLMService
-    LLMService -. "Direct Groq API (gpt-oss-120b)" .-> GroqAPI[Groq Cloud LLM]
+    IntCtrl --> Validator
+    IntCtrl --> SessionModel
+    IntCtrl --> AIClient
 
-    %% Future microservice link
-    IntCtrl -. "Planned Microservice Extraction" .-> AIServiceNode
+    AIClient -- "POST /interview/plan-blueprint" --> BlueprintPlanner
+    AIClient -- "POST /interview/section-batch" --> BatchGenerator
+    AIClient -- "POST /interview/decide-followup" --> FollowUpEngine
+    AIClient -- "POST /interview/evaluate-session" --> SessionEvaluator
+
+    BatchGenerator -. "Retrieve Grounding" .-> ChromaStore
 ```
 
 ---
@@ -106,12 +185,6 @@ flowchart TD
 
 ### Overview
 PrepNova features a complete, enterprise-grade, production-ready OAuth 2.0 and OpenID Connect (OIDC) authentication architecture. It supports Google Sign-In with mandatory **PKCE (`S256`)**, cryptographically secure single-use **State** validation, and OIDC **Nonce** verification against Google's public JWKS certificates (`RS256`).
-
-The architecture uses a pluggable adapter pattern, enabling straightforward expansion to additional providers (such as GitHub, Microsoft Azure AD, and Auth0) without modifying core business or user authorization layers.
-
-### Supported Providers
-- **Google (Production)**: OpenID Connect 1.0 / OAuth 2.0 with PKCE (`S256`), Nonce verification, and RS256 JWKS signature validation.
-- **GitHub (Pluggable Adapter)**: OAuth 2.0 with PKCE and user email resolution.
 
 ### Authentication Flow Diagram
 
@@ -148,172 +221,6 @@ sequenceDiagram
     F->>U: Redirect to Candidate Dashboard
 ```
 
-### Architecture Components
-1. **`backend/src/oauth/oauth.config.js`**: Centralized configuration management for OAuth providers, client IDs, secrets, redirect URIs, scopes, and allowed frontend origins.
-2. **`backend/src/oauth/oauth.state.js`**: Cryptographic transaction management generating PKCE code verifiers/challenges (`S256`), high-entropy states, nonces, and single-use handoff tickets with automatic TTL expiration.
-3. **`backend/src/oauth/identity.mapper.js`**: Normalizes provider-specific payloads into a standardized internal user profile representation (`provider`, `providerUserId`, `email`, `emailVerified`, `name`, `avatarUrl`).
-4. **`backend/src/oauth/providers/base.provider.js`**: Abstract adapter contract defining `getAuthorizationUrl`, `exchangeCode`, `verifyIdToken`, and `getUserIdentity`.
-5. **`backend/src/oauth/providers/google.provider.js`**: Google OIDC adapter implementing OpenID discovery, token exchange, caching of Google public keys from `https://www.googleapis.com/oauth2/v3/certs`, and cryptographic RS256 ID token verification.
-6. **`backend/src/oauth/oauth.service.js`**: Core business orchestrator coordinating state validation, provider communication, deterministic MongoDB user resolution, account linking, and application JWT generation.
-7. **`backend/src/controllers/oauth.controller.js`**: Express route handlers for listing providers, initiating authorization, handling callbacks, and exchanging handoff tickets.
-8. **`frontend/src/components/auth/OAuthButton.jsx`**: Accessible, branded Google Single Sign-On button with loading indicators and error states.
-
-### Environment Variables
-Configure the following variables in `backend/.env`:
-
-```env
-# Google OAuth 2.0 & OpenID Connect (PKCE & Nonce)
-GOOGLE_CLIENT_ID=your_google_client_id.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=your_google_client_secret
-GOOGLE_REDIRECT_URI=http://localhost:5000/api/auth/oauth/google/callback
-
-# Allowed Frontend Origins (Comma-separated for CORS and safe redirects)
-FRONTEND_URL=http://127.0.0.1:5173,http://localhost:5173
-```
-
-### Provider Console Configuration (Google Cloud)
-1. Go to the [Google Cloud Console](https://console.cloud.google.com/) -> **APIs & Services** -> **Credentials**.
-2. Click **Create Credentials** -> **OAuth client ID** -> Application Type: **Web application**.
-3. Under **Authorized JavaScript origins**, add:
-   - `http://localhost:5173`
-   - `http://127.0.0.1:5173`
-   - `http://localhost:5000`
-4. Under **Authorized redirect URIs**, add:
-   - `http://localhost:5000/api/auth/oauth/google/callback`
-5. Copy the generated **Client ID** and **Client Secret** into your `backend/.env` file.
-
-### Required Scopes
-- `openid`: Enables OpenID Connect identity verification and returns a signed ID token.
-- `email`: Accesses the candidate's primary email address and verification state.
-- `profile`: Accesses name, avatar URL, and given/family names for candidate profile initialization.
-
-### Security Architecture & Protections
-- **PKCE (`S256`)**: Mitigates authorization code interception attacks. A cryptographically random `code_verifier` is hashed using SHA-256 to derive the `code_challenge`, and the verifier is only presented during server-to-server code exchange.
-- **State Validation**: Random 32-byte hex tokens protect against Cross-Site Request Forgery (CSRF). States are bound to authorization transactions and enforced as single-use.
-- **Nonce Validation**: Protects against ID token replay and injection attacks. Nonce is validated against the cryptographically signed ID token claims.
-- **RS256 Signature Verification**: Google ID tokens are verified using Google's public JWKS certificates. Tokens with invalid signatures, wrong issuers, mismatched audience, or expired timestamps are rejected with HTTP 401.
-- **Server-Side Secret Isolation**: Client secrets and PKCE verifiers are never transmitted to or accessible by client-side JavaScript.
-- **Single-Use Handoff Tickets**: Tokens and secrets are never exposed in browser URLs. After OAuth succeeds, the backend generates a short-lived ticket (`pnt_...`, 60s TTL) which the frontend exchanges once via POST.
-- **Safe Open Redirect Protection**: Callback redirects strictly validate against configured `FRONTEND_URL` allowlists.
-
-### User Creation & Account Linking Policy
-- **Existing OAuth Identity**: If a user document exists with matching `authProviders.provider` and `authProviders.providerUserId`, the user is authenticated directly.
-- **Existing Local Account**: If no OAuth link exists, but the user's verified email matches an existing local user document, the OAuth provider identity is securely linked to the existing user, preserving password authentication while enabling OAuth sign-in.
-- **New Candidate User**: If no match exists, a new candidate user document is created with role `"user"` and default workspace profile metadata.
-- **Role Isolation**: OAuth logins never automatically grant elevated permissions (`role` defaults strictly to `"user"`).
-
----
-
-## Authentication Lifecycle Hardening
-
-### Authoritative Access Rule
-```text
-TOKEN EXISTS ≠ USER IS AUTHENTICATED
-
-AUTHORITATIVE ACCESS =
-  VALID JWT SIGNATURE
-+ TOKEN NOT EXPIRED
-+ TOKEN NOT REVOKED
-+ DATABASE USER STILL EXISTS (User.findById)
-+ USER ACCOUNT ACTIVE (isActive !== false)
-+ VALID RBAC AUTHORIZATION
-```
-
-### 1. Immediate Invalidation on User Deletion
-- In `backend/src/middleware/auth.middleware.js`, every protected API request extracts the `userId` from the verified token and queries MongoDB (`User.findById(userId)`).
-- If the user document was deleted externally from MongoDB, the request is **immediately rejected with HTTP 401 Unauthorized** (`{ success: false, error: "Authentication required. User account no longer exists." }`).
-- A valid JWT signature alone is never sufficient to bypass database state.
-
-### 2. Account Status Validation
-- The `User` model incorporates `isActive: { type: Boolean, default: true }`.
-- Inactive / suspended accounts are immediately rejected with HTTP 401 on all protected routes and login endpoints.
-
-### 3. Graceful & Idempotent Logout
-- When a user logs out (`POST /api/auth/logout`), the backend extracts and registers the active token in a server-side revocation blacklist (`revokeToken()`).
-- Any subsequent request attempting to reuse the revoked token is immediately rejected with HTTP 401 (`"Session has been logged out or revoked."`).
-- Logout is strictly **idempotent**: calling logout with an already-revoked token, expired token, or for a deleted user returns HTTP 200 without crashing.
-- **Application Logout vs. Google Logout**: PrepNova application logout invalidates the local session and application JWT. It does not tamper with or forcibly sign the user out of their global browser Google session.
-
-### 4. Google OAuth vs. Normal Email/Password Account Consistency
-- **Stable Subject (`sub`) Identifier**: Google OAuth accounts are uniquely indexed and tracked by `(provider: "google", providerUserId: sub)`.
-- **Duplicate Prevention**: Compound sparse unique index on `{ "authProviders.provider": 1, "authProviders.providerUserId": 1 }` and unique index on `email`.
-- **Deterministic Account Linking**: If a user registers with email/password and later authenticates with Google using the same verified email, the provider is linked to the existing user. Both password and Google login remain functional for that account without creating duplicate documents.
-- **Re-Authentication After Deletion**: If a Google user's record is deleted from MongoDB, their old JWT is immediately rejected. If they sign in through Google again, the system detects no existing document and creates a fresh new application user.
-
-### 5. Frontend Centralized 401 Handling
-- In `frontend/src/lib/api.js`, `apiFetch` intercepts HTTP 401 responses globally across all protected requests.
-- When a 401 occurs, `clearAuthSession()` immediately purges `prepNova_token` and `prepNova_user` from `localStorage` and resets `AuthContext` state.
-- On application boot, `AuthContext` validates the stored token against `GET /api/auth/me`. If rejected, it cleanly resets session state without infinite loops.
-
----
-
-## Repository Structure
-
-```
-PrepNova/
-├── AIService/                          # Python FastAPI AI Microservice (Port 8000)
-│   ├── models/                         # Pydantic structured data schemas (resume, jd)
-│   ├── routes/                         # FastAPI route definitions (/resume, /jd)
-│   ├── services/                       # PyMuPDF parser, OCR, LangChain ChatGroq extractors
-│   ├── main.py                         # FastAPI application entry point
-│   ├── requirements.txt                # Python dependencies
-│   └── .env.example                    # AI service configuration (GROQ_API_KEY, MODEL_NAME)
-├── backend/                            # Node.js Express Backend (Port 5000)
-│   ├── src/
-│   │   ├── config/                     # Database connection & ready-state checking (db.js)
-│   │   ├── controllers/                # Auth controller & Interview session controller
-│   │   ├── middleware/                 # JWT authenticateToken, authorizeRoles, rateLimiter
-│   │   ├── models/                     # Mongoose User model with bcrypt pre-hooks
-│   │   ├── routes/                     # /api/auth and /api/interview routers
-│   │   ├── services/                   # auth.service.js, llm.service.js, questionBank.service.js
-│   │   ├── utils/                      # jwt.js signing and verification helpers
-│   │   ├── validators/                 # auth.validator.js input validation schemas
-│   │   └── app.js                      # Express application, CORS, error middleware
-│   ├── tests/                          # Automated test suite (37 unit & integration tests)
-│   ├── server.js                       # HTTP server entry point
-│   ├── package.json                    # Backend scripts and dependencies
-│   └── .env.example                    # Backend environment template
-├── frontend/                           # React + Vite Frontend (Port 5173)
-│   ├── src/
-│   │   ├── assets/                     # Editorial workspace imagery & SVG assets
-│   │   ├── components/
-│   │   │   ├── dashboard/              # Sidebar, stat cards, active tracks, profile header
-│   │   │   ├── history/                # HistoryTable with search, tier filters, pagination
-│   │   │   ├── interview/              # Question reader, code editor, audio visualizer
-│   │   │   └── layout/                 # Navbar, WorkspaceNavbar, WorkspaceLayout, Footer
-│   │   ├── context/                    # AuthContext & ThemeContext providers
-│   │   ├── lib/                        # Centralized Axios API client (api.js) & utilities
-│   │   ├── pages/                      # LoginPage, SignupPage, Dashboard, InterviewPage, etc.
-│   │   ├── App.jsx                     # Route definitions and protected route wrappers
-│   │   ├── index.css                   # Modern design tokens, button styles, typography
-│   │   └── main.jsx                    # React root mounting
-│   ├── tailwind.config.js              # Theme color definitions, font stack, slate palette
-│   ├── vite.config.js                  # Vite configuration & dev server setup
-│   └── package.json                    # Frontend scripts and dependencies
-└── README.md                           # Master living documentation & implementation logs
-```
-
----
-
-## UI Design System
-
-The frontend has been completely redesigned using a curated, minimalist modern SaaS aesthetic inspired by developer-grade tools (Linear, Raycast, Stripe):
-
-### Color Tokens & Palette
-
-| Token | Light Mode Value | Dark Mode Value | Usage |
-| :--- | :--- | :--- | :--- |
-| **Primary** | `#4F46E5` (Indigo-600) | `#6366F1` (Indigo-500) | Primary buttons, active tabs, brand accents |
-| **Primary Hover** | `#4338CA` (Indigo-700) | `#4F46E5` (Indigo-600) | Hover button states |
-| **Background** | `#F8FAFC` (Slate-50) | `#090D16` (Deep Obsidian) | Full screen base background |
-| **Surface Card** | `#FFFFFF` (Pure White) | `#0F172A` (Slate-900) | Component panels, containers, modals |
-| **Border Neutral**| `#E2E8F0` (Slate-200) | `#1E293B` (Slate-800) | Subtle container separators, input borders |
-| **Text Primary** | `#0F172A` (Slate-900) | `#F8FAFC` (Slate-50) | Primary headlines, question headers |
-| **Text Muted** | `#64748B` (Slate-500) | `#94A3B8` (Slate-400) | Subtitles, helper text, timestamps |
-| **Success** | `#059669` (Emerald-600) | `#34D399` (Emerald-400) | Pass badges, score highlights, checkmarks |
-| **Warning** | `#D97706` (Amber-600) | `#FBBF24` (Amber-400) | Medium difficulty, partial score indicators |
-| **Danger** | `#DC2626` (Rose-600) | `#F87171` (Rose-400) | Hard difficulty, destructive actions, errors |
-
 ---
 
 ## Complete API Documentation
@@ -325,16 +232,33 @@ The frontend has been completely redesigned using a curated, minimalist modern S
 | `POST` | `/api/auth/register` | None (Rate Limited) | Create user account & hash password | `201 Created` (`token`, sanitized `user`) |
 | `POST` | `/api/auth/login` | None (Rate Limited) | Validate credentials & issue JWT | `200 OK` (`token`, sanitized `user`) |
 | `GET` | `/api/auth/me` | Bearer JWT | Fetch current authenticated profile | `200 OK` (sanitized `user`) |
-| `POST` | `/api/auth/logout` | Bearer JWT | Confirm logout & client token clearance | `200 OK` (`message`) |
+| `POST` | `/api/auth/logout` | Bearer JWT | Invalidate & blacklist active token | `200 OK` (`message`) |
+| `POST` | `/api/auth/forgot-password` | None (Rate Limited) | Generate & dispatch 6-digit OTP email | `200 OK` (Enumeration protected) |
+| `POST` | `/api/auth/verify-reset-otp` | None | Verify OTP and issue signed `resetToken` | `200 OK` (`resetToken`) |
+| `POST` | `/api/auth/reset-password` | None | Reset password & bump `tokenVersion` | `200 OK` (`message`) |
 
-### 2. Interview Simulation Endpoints (`/api/interview`)
+### 2. Interview Simulation & Practice Endpoints (`/api/interview`)
 
-| Method | Endpoint | Auth | Purpose | Response |
+| Method | Endpoint | Auth | Purpose | Request Body / Params |
 | :--- | :--- | :--- | :--- | :--- |
-| `POST` | `/api/interview/start` | Bearer JWT | Initialize interview session for `req.user.id` | `200 OK` (`sessionId`, initial `question`) |
-| `POST` | `/api/interview/followup` | Bearer JWT | Submit answer; verify ownership & evaluate | `200 OK` (`feedback`, score, next `question`) |
-| `POST` | `/api/interview/skip` | Bearer JWT | Skip question with zero score penalty | `200 OK` (next `question`) |
-| `DELETE`| `/api/interview/:sessionId` | Bearer JWT | Abort/finish session and clean memory | `200 OK` (`message`) |
+| `POST` | `/api/interview/start` | Bearer JWT | Initialize interview session (Complete or Selected Sections) | `{ role, level, mode, practiceMode, selectedSections, maxQuestions, resumeId, jdId }` |
+| `POST` | `/api/interview/followup` | Bearer JWT | Submit candidate answer; advance section batch | `{ sessionId, answer, audioUsed }` |
+| `POST` | `/api/interview/skip` | Bearer JWT | Skip question and advance to next turn | `{ sessionId }` |
+| `GET` | `/api/interview/:sessionId/active` | Bearer JWT | Fetch live session state, section metadata & progress | Session ID param |
+| `GET` | `/api/interview/:sessionId/report` | Bearer JWT | Fetch complete scorecard & section-wise evaluation | Session ID param |
+| `POST` | `/api/interview/:sessionId/retry-evaluation` | Bearer JWT | Re-run batch evaluation if prior attempt timed out | Session ID param |
+| `GET` | `/api/interview/history` | Bearer JWT | Query paginated interview history with mode filter | Query params: `page`, `limit`, `practiceMode`, `status` |
+| `GET` | `/api/interview/:sessionId/pdf` | Bearer JWT | Download printable HTML/PDF interview evaluation report | Session ID param |
+
+### 3. AI Engine Microservice Endpoints (Port 8000)
+
+| Method | Endpoint | Purpose | Description |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/interview/plan-blueprint` | Structured Blueprint Planning | Plans per-section question budgets across standard or selected sections |
+| `POST` | `/interview/section-batch` | Section Question Generation | Generates ordered primary questions for active section with scenario & custom topic scoping |
+| `POST` | `/interview/decide-followup` | Runtime Follow-Up Decisions | Evaluates answer; decides `FOLLOW_UP`, `NEXT_PRIMARY`, or `NEXT_SECTION` |
+| `POST` | `/interview/evaluate-session` | Post-Interview Batch Scoring | Evaluates full transcript across 5-part rubric and produces section-wise summaries |
+| `POST` | `/interview/validate-context` | 6-Dimension Fit Validation | Calibrates candidate profile against role and JD requirements |
 
 ---
 
@@ -362,7 +286,7 @@ npm run dev
 ```
 Frontend runs at: **`http://127.0.0.1:5173`**
 
-### 4. AI Microservice Setup (Optional)
+### 4. AI Microservice Setup
 ```bash
 cd AIService
 python -m venv .venv
@@ -376,7 +300,7 @@ AI Microservice runs at: **`http://127.0.0.1:8000`**
 
 ## Automated Testing Suite
 
-To run all backend unit and integration tests:
+To run all backend unit and contract tests:
 ```bash
 cd backend
 npm test
@@ -394,169 +318,52 @@ npm test
 - OAuth State, PKCE & Nonce Management: **7 PASS**
 - Google OAuth & OIDC Provider RS256 Verification: **5 PASS**
 - OAuth Identity Mapper & Normalizer: **4 PASS**
-- OAuth & OIDC Integration (Initiate, Callback, Exchange, Me, Linking, Deletion Invalidation, Single-Use): **13 PASS**
-- **Total: 69 tests, 18 suites, 0 failures, 100% passing.**
-
----
-
-## Forgot Password & Password Reset (Email OTP)
-
-PrepNova implements a production-grade, cryptographically secure password recovery system built with timed 6-digit numeric verification codes (OTPs), SHA-256 database hashing, signed single-use reset authorization tokens, and Nodemailer transactional emails.
-
-### 1. Password Reset Architecture & Sequence
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor User as Candidate (Browser)
-    participant F as Frontend (React)
-    participant B as Backend API (Express)
-    participant DB as MongoDB (User)
-    participant E as Email Service (Nodemailer)
-
-    User->>F: Clicks "Forgot Password?" & enters email
-    F->>B: POST /api/auth/forgot-password { email }
-    B->>DB: Lookup user (case-insensitive & trimmed)
-    alt User does not exist or inactive
-        B-->>F: HTTP 200 { success: true, message: "If an account exists..." } (Enumeration Protected)
-    else Google-Only Account (no local password)
-        B->>E: Dispatches Google Sign-In Guidance Notice
-        B-->>F: HTTP 200 { success: true, message: "If an account exists..." }
-    else Local Email/Password Account
-        B->>B: crypto.randomInt(0, 1000000) -> 6-digit OTP
-        B->>B: SHA-256(OTP + RESET_SECRET) -> OTP Hash
-        B->>DB: Save passwordResetOTPHash, expiresAt (+10m), reset attempts (0)
-        B->>E: Send branded HTML + text OTP email
-        B-->>F: HTTP 200 { success: true, message: "If an account exists..." }
-    end
-
-    User->>F: Inputs 6-digit code from email
-    F->>B: POST /api/auth/verify-reset-otp { email, otp }
-    B->>DB: Load user reset state
-    alt Invalid code / Exceeded attempts / Expired
-        B->>DB: Increment attempts (if >= 5, wipe OTP state)
-        B-->>F: HTTP 400 { success: false, error: "Invalid or expired code" }
-    else Valid OTP
-        B->>DB: Invalidate OTP immediately (prevent replay) & record verified timestamp
-        B->>B: Signs short-lived resetToken (15m, purpose: "password_reset", tokenVersion)
-        B-->>F: HTTP 200 { success: true, resetToken }
-    end
-
-    User->>F: Enters new password & confirms
-    F->>B: POST /api/auth/reset-password { resetToken, newPassword, confirmPassword }
-    B->>B: Verify cryptographic signature, expiry & purpose
-    B->>DB: Find user & verify tokenVersion matches
-    B->>B: Hash new password with bcrypt (10 rounds)
-    B->>DB: Update password, increment user.tokenVersion += 1, clear all reset fields
-    B->>E: Send "Your password was changed" security alert email
-    B-->>F: HTTP 200 { success: true, message: "Password updated successfully" }
-    F->>User: Displays success confirmation & redirects to Sign In
-```
-
-### 2. Security & Hardening Guarantees
-
-1. **User Enumeration Protection**:
-   - `POST /api/auth/forgot-password` returns an identical HTTP 200 generic message (`"If an account exists for this email, a password reset code has been sent."`) regardless of whether the email exists, is inactive, or is invalid, eliminating account harvesting.
-2. **Cryptographically Secure OTPs**:
-   - Generated via Node.js `crypto.randomInt(0, 1000000)` with leading-zero preservation (`000000`–`999999`).
-   - Never uses pseudo-random generators (`Math.random()`) or predictable sequences.
-3. **Never Store Raw OTPs**:
-   - Stored in MongoDB strictly as a one-way hex SHA-256 hash salted with `PASSWORD_RESET_SECRET` / `JWT_SECRET`.
-   - Raw OTPs are never stored, never returned in API responses, never logged, and never included in URL parameters.
-4. **Timing-Safe Hash Comparison**:
-   - Verified via `crypto.timingSafeEqual` over hex buffer digests to prevent timing analysis attacks.
-5. **Configurable TTL Expiration & Maximum Attempt Throttling**:
-   - Default 10-minute expiration window (`PASSWORD_RESET_OTP_EXPIRES_MINUTES=10`).
-   - Maximum 5 failed verification attempts per OTP (`PASSWORD_RESET_OTP_MAX_ATTEMPTS=5`). Reaching the limit immediately nullifies the hash, requiring a fresh request.
-6. **Replay & Concurrency Protection**:
-   - Successful OTP verification immediately purges `passwordResetOTPHash` from MongoDB before issuing a 15-minute cryptographically signed `resetToken`.
-   - Making a new reset request supersedes and revokes any previous OTP.
-7. **Instant Multi-Device Session Invalidation via `tokenVersion`**:
-   - Every user record maintains a `tokenVersion: Number`.
-   - Active JWT access tokens embed the user's `tokenVersion`.
-   - On successful password reset, `user.tokenVersion` is incremented by 1, instantly rendering all existing application tokens/sessions across all devices invalid with HTTP 401 Unauthorized.
-8. **Google OAuth Account Integrity**:
-   - Pure Google Sign-In accounts (without a local password) receive a branded informational notice explaining that their account uses Google Sign-In, preventing silent creation of unauthorized local credentials.
-
-### 3. Transactional Email System & Branded Templates
-
-Emails are delivered via a modular `EmailService` utilizing Nodemailer with multi-part HTML + plain-text fallback:
-- **Base Layout (`base.html`)**: Branded dark header with PrepNova logo, responsive container, high-contrast typography, security notices, and compliance footer.
-- **Password Reset (`password-reset.html`)**: Prominently formatted OTP code card, expiration window, and security instructions.
-- **Password Changed (`password-changed.html`)**: Immediate security confirmation notice with timestamp, session termination alert, and security contact details (`support@prepnova.com`).
-- **Google Account Notice (`google-account-notice.html`)**: Helpful sign-in guidance for single sign-on users.
-
-### 4. API Endpoints
-
-| Method | Endpoint | Description | Request Body | Response |
-| :--- | :--- | :--- | :--- | :--- |
-| `POST` | `/api/auth/forgot-password` | Initiates reset, generates & hashes 6-digit OTP, sends email | `{ "email": "candidate@example.com" }` | `{ "success": true, "message": "..." }` |
-| `POST` | `/api/auth/verify-reset-otp` | Verifies OTP code, invalidates code, returns signed `resetToken` | `{ "email": "candidate@example.com", "otp": "483921" }` | `{ "success": true, "resetToken": "..." }` |
-| `POST` | `/api/auth/reset-password` | Resets password, bumps `tokenVersion`, invalidates old sessions | `{ "resetToken": "...", "newPassword": "...", "confirmPassword": "..." }` | `{ "success": true, "message": "..." }` |
-| `POST` | `/api/auth/resend-reset-otp` | Invalidates old OTP and sends a fresh 6-digit code | `{ "email": "candidate@example.com" }` | `{ "success": true, "message": "..." }` |
+- OAuth & OIDC Integration: **13 PASS**
+- Password Reset & OTP Lifecycle: **16 PASS**
+- Email Service & Template Rendering: **4 PASS**
+- Section-Wise Batch Generation & Persistence: **4 PASS**
+- Interview Generation Contracts & Section Validators: **13 PASS**
+- **Total: 101 tests, 26 suites, 0 failures, 100% passing.**
 
 ---
 
 ## Implementation Log
 
-### 2026-10-03 — Phase 4: Production-Grade Forgot Password, OTP Reset & Session Revocation
-- **Status**: Completed & Verified (**91 passing tests across 26 suites**, 100% pass rate)
+### 2026-11-15 — Phase 5: Section-Based Interview Practice & Granular Scorecard Breakdown
+- **Status**: Completed & Verified (**101 passing tests across 26 suites**, Vite build pass 0 errors)
 - **Changes**:
-  - Built cryptographically secure OTP generator (`crypto.randomInt`) and SHA-256 hashing utility with timing-safe verification (`backend/src/utils/otp.js`).
-  - Added `passwordResetOTPHash`, `passwordResetOTPExpiresAt`, `passwordResetOTPAttempts`, `passwordResetOTPVerifiedAt`, `passwordResetRequestedAt`, and `tokenVersion` fields to Mongoose `User` model with strict `toJSON` exclusion.
-  - Implemented `tokenVersion` session invalidation inside `authenticateToken` middleware, ensuring password changes instantly revoke prior tokens across all client devices.
-  - Developed a reusable `EmailService` (`backend/src/services/email.service.js`) and branded HTML + plain text email templates for password reset, password changed alerts, and Google SSO notices.
-  - Added `POST /api/auth/forgot-password`, `POST /api/auth/verify-reset-otp`, `POST /api/auth/reset-password`, and `POST /api/auth/resend-reset-otp` endpoints with IP rate limiting.
-  - Built interactive 4-step frontend password recovery flow (`frontend/src/pages/ForgotPasswordPage.jsx`) featuring 6-box auto-focusing numeric OTP inputs, paste support, 45-second resend cooldown timer, masked recipient email, real-time password requirement checklist, and clear success states.
-  - Linked "Forgot password?" from `LoginPage.jsx` and registered `/forgot-password` and `/reset-password` routes in `App.jsx`.
-  - Created automated test suites covering all 6 security and lifecycle test groups (`forgot_password.test.js`, `otp.test.js`, `email.service.test.js`).
+  - Implemented dual interview mode toggle (`complete` vs `selected_sections`) in `CustomizeInterviewPage.jsx`.
+  - Built comprehensive 17-category searchable section library (`sections.js`) covering DSA, System Design, Scenario-Based Outages, React, Node.js, Cloud/DevOps, AI/ML/RAG, Databases, OS, Networks, Cybersecurity, and more.
+  - Developed `SectionSelector.jsx` with category filter pills, instant search, removable active chips, and custom topic addition.
+  - Implemented `sectionRecommender.js` to recommend top technical sections based on role, resume skills, and JD criteria with 1-click application.
+  - Updated `interview.validator.js` with `validateSelectedSections` and `validatePracticeMode`.
+  - Connected `aiService.client.js` to `AIService` endpoints (`/plan-blueprint`, `/section-batch`, `/decide-followup`, `/evaluate-session`).
+  - Enhanced `plan_interview_blueprint` in `AIService/app/services/interview/graph.py` to plan blueprints exclusively from user-selected sections and distribute question budgets evenly.
+  - Added realistic workplace and production incident scenario prompts for `scenario_based` questions, dynamic custom topic prompts, and expanded deterministic fallback pools for all 17 categories.
+  - Persisted `practiceMode`, `selectedSections`, and `sectionWiseEvaluations` on Mongoose `InterviewSession` and `FinalReport` schemas.
+  - Implemented `buildSectionWiseEvaluations` in `interview.controller.js` to compute section scores, category rubrics, strengths, weaknesses, and improvement suggestions.
+  - Enhanced `ResultsPage.jsx` and `InterviewResults.jsx` with a dedicated **Section-by-Section Performance Breakdown** panel.
+  - Updated `History.jsx` and `HistoryTable.jsx` with practice mode badges, topic chips, and dropdown filtering.
+
+### 2026-10-03 — Phase 4: Production-Grade Forgot Password, OTP Reset & Session Revocation
+- **Status**: Completed & Verified (91 passing tests)
+- **Changes**:
+  - Built cryptographically secure OTP generator (`crypto.randomInt`) and SHA-256 hashing utility with timing-safe verification.
+  - Added `passwordResetOTPHash`, `passwordResetOTPExpiresAt`, and `tokenVersion` fields to Mongoose `User` model.
+  - Implemented multi-device session revocation via `tokenVersion`.
+  - Developed `EmailService` and branded HTML templates for password reset, password changed alerts, and Google SSO notices.
 
 ### 2026-10-01 — Phase 3: OAuth Hardening, User Deletion Invalidation & Graceful Logout
 - **Status**: Completed & Verified (69 passing tests)
 - **Changes**:
-  - Implemented authoritative MongoDB user existence checks on every protected request (`User.findById`).
-  - Guaranteed that deleting a user from MongoDB immediately invalidates active JWTs with HTTP 401.
-  - Implemented server-side token revocation on logout (`POST /api/auth/logout`) with idempotent handling.
-  - Added `isActive: { type: Boolean, default: true }` to `User` model, rejecting deactivated accounts with 401.
-  - Created unique sparse index `{ "authProviders.provider": 1, "authProviders.providerUserId": 1 }` preventing duplicate OAuth identities.
+  - Implemented authoritative MongoDB user checks on every protected request (`User.findById`).
+  - Guaranteed user deletion immediately invalidates active JWTs with HTTP 401.
+  - Implemented server-side token revocation on logout (`POST /api/auth/logout`).
+  - Added `isActive` account suspension check and unique compound OAuth index.
 
-### 2026-10-01 — Phase 1: Complete Authentication & Authorization System
+### 2026-10-01 — Phase 1 & 2: Authentication Core & Modern SaaS UI Redesign
 - **Status**: Completed & Verified (37 passing tests)
 - **Changes**:
-  - Implemented bcrypt password hashing with 10 salt rounds.
-  - Implemented JWT token generation with HS256 algorithm and configurable expiry.
-  - Added `authenticateToken` middleware and `authorizeRoles` role-based access control.
-  - Added in-memory IP rate limiter on `/register` and `/login` to mitigate brute-force attacks.
-  - Scoped all interview operations strictly to `req.user.id` to prevent cross-user session tampering.
-
-### 2026-10-01 — Phase 2: Complete Modern UI Redesign
-- **Status**: Completed & Production Build Verified
-- **Changes**:
-  - **Design System**: Built a cohesive design system using curated Slate and Indigo design tokens.
-  - **Authentication Screens**: Redesigned `LoginPage` and `SignupPage` with split branding panels, accessible password visibility toggles, clear validation feedback, and professional copy.
-  - **Workspace & Dashboard**: Replaced AI-template cards with clean, structured panels displaying real user metrics, active track overviews, and quick launch triggers.
-  - **Interview Workspace**: Designed a focused mock interview environment with live question timers, progress ribbons, syntax-ready answer areas, and rubric-driven evaluation cards.
-  - **Role & Customize Setup**: Created an intuitive 3-step setup flow for configuring roles, technical competencies, input formats, and difficulty tiers.
-  - **Scorecard & Reports**: Redesigned post-interview reports with honest rubric breakdowns, category progress meters, actionable recommendations, and formatted text export.
-  - **ATS Resume Analysis**: Created an interactive resume analysis page with file drag-and-drop, layout suggestions, and keyword matching breakdown.
-
----
-
-## Known Issues & Technical Debt
-
-1. **Unconnected AI Microservice**:
-   - The Python FastAPI AI microservice in `AIService/` has fully functional LangChain and Groq extraction routines, but the Node.js Express backend currently uses its internal `llm.service.js` rather than delegating PDF parsing to `http://localhost:8000`.
-2. **In-Memory Interview State**:
-   - `interview.controller.js` manages active sessions in a Node process dictionary (`sessions = {}`). In multi-instance or serverless deployments, active sessions should be stored in MongoDB with TTL indexing.
-3. **RAG Vector Search Offline**:
-   - `backend/rag/search.py` is a standalone prototype script. Vector embeddings and similarity retrieval are not yet hooked up to live question generation.
-
----
-
-## Future Work
-
-- [ ] Connect Node.js backend to FastAPI AI microservice for multipart PDF resume & JD extraction.
-- [ ] Migrate in-memory interview session dictionary to MongoDB `InterviewSession` schema.
-- [ ] Connect live Chroma vector retrieval to inject personalized candidate resume context into Groq question prompts.
-- [ ] Implement audio recording and server-side speech-to-text transcription for voice mock interviews.
-
+  - Built bcrypt authentication, JWT token signing, and role-based authorization guards.
+  - Redesigned user interface using curated Slate and Indigo design tokens.
+  - Created modular workspace layout, dark/light theme support, and candidate dashboards.

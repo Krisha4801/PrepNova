@@ -23,6 +23,7 @@ export default function HistoryTable({
   const [searchTerm, setSearchTerm] = useState('');
   const [difficultyFilter, setDifficultyFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
+  const [practiceModeFilter, setPracticeModeFilter] = useState('All');
 
   const filteredReports = useMemo(() => {
     return (initialReports || []).filter((item) => {
@@ -31,8 +32,11 @@ export default function HistoryTable({
       
       const matchesDifficulty = difficultyFilter === 'All' || (item.difficulty || '').toLowerCase() === difficultyFilter.toLowerCase();
       const matchesStatus = statusFilter === 'All' || (item.status || '').toLowerCase() === statusFilter.toLowerCase();
+      const matchesMode = practiceModeFilter === 'All' ||
+        (practiceModeFilter === 'selected_sections' && item.practiceMode === 'selected_sections') ||
+        (practiceModeFilter === 'complete' && item.practiceMode !== 'selected_sections');
 
-      return matchesSearch && matchesDifficulty && matchesStatus;
+      return matchesSearch && matchesDifficulty && matchesStatus && matchesMode;
     });
   }, [initialReports, searchTerm, difficultyFilter, statusFilter]);
 
@@ -54,6 +58,16 @@ export default function HistoryTable({
 
         {/* Filters */}
         <div className="flex items-center gap-2">
+          <select
+            value={practiceModeFilter}
+            onChange={(e) => setPracticeModeFilter(e.target.value)}
+            className="input-field h-9 text-xs py-1 px-2.5 w-auto cursor-pointer"
+          >
+            <option value="All">All Modes</option>
+            <option value="complete">Complete Interview</option>
+            <option value="selected_sections">Selected Sections</option>
+          </select>
+
           <select
             value={difficultyFilter}
             onChange={(e) => setDifficultyFilter(e.target.value)}
@@ -113,8 +127,29 @@ export default function HistoryTable({
               {filteredReports.map((report) => (
                 <tr key={report.id} className="hover:bg-slate-50/60 dark:hover:bg-slate-850/50 transition-colors">
                   <td className="py-3.5 pl-2">
-                    <span className="font-bold text-slate-900 dark:text-slate-100 block">{report.role}</span>
-                    <span className="text-[11px] text-slate-400">{report.domain}</span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-bold text-slate-900 dark:text-slate-100">{report.role}</span>
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                        report.practiceMode === 'selected_sections'
+                          ? 'bg-purple-100 text-purple-800 dark:bg-purple-950/80 dark:text-purple-300 border border-purple-200 dark:border-purple-800'
+                          : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                      }`}>
+                        {report.practiceMode === 'selected_sections' ? `Selected (${report.selectedSections?.length || 'Sections'})` : 'Complete'}
+                      </span>
+                    </div>
+                    <span className="text-[11px] text-slate-400 block mt-0.5">{report.domain}</span>
+                    {report.practiceMode === 'selected_sections' && report.selectedSections && report.selectedSections.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {report.selectedSections.slice(0, 3).map((sec, sIdx) => (
+                          <span key={sIdx} className="text-[9px] px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
+                            {sec.name || sec.title || sec.id}
+                          </span>
+                        ))}
+                        {report.selectedSections.length > 3 && (
+                          <span className="text-[9px] text-slate-400">+{report.selectedSections.length - 3} more</span>
+                        )}
+                      </div>
+                    )}
                   </td>
                   <td className="py-3.5 text-slate-500 dark:text-slate-400">{report.date}</td>
                   <td className="py-3.5">
