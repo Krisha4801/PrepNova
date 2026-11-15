@@ -1381,6 +1381,77 @@ def plan_interview_blueprint(request: PlanBlueprintRequest) -> InterviewBlueprin
     if count_mode not in ["3", "6", "10", "dynamic"]:
         count_mode = "6"
 
+    # Section-Based Interview Practice mode: plan blueprint exclusively from user-selected sections
+    practice_mode = getattr(request, "practice_mode", "complete") or "complete"
+    selected_secs = getattr(request, "selected_sections", []) or []
+
+    if practice_mode == "selected_sections" and selected_secs:
+        req_max_q = getattr(request, "max_questions", None)
+        if req_max_q and int(req_max_q) > 0:
+            target_total = int(req_max_q)
+        elif count_mode in ["3", "6", "10"]:
+            target_total = int(count_mode)
+        else:
+            target_total = max(3, len(selected_secs) * 2)
+
+        n_secs = len(selected_secs)
+        target_total = max(n_secs, target_total)
+
+        base_count = target_total // n_secs
+        remainder = target_total % n_secs
+
+        sections = []
+        for idx, sec in enumerate(selected_secs):
+            sec_id = sec.get("id") or f"section_{idx+1}"
+            sec_name = sec.get("name") or sec.get("title") or sec_id.replace("_", " ").title()
+            sec_obj = sec.get("description") or sec.get("objective") or f"Assess proficiency, trade-offs, and practical application in {sec_name}"
+            sec_count = base_count + (1 if idx < remainder else 0)
+            target_mins = max(2.0, round((sec_count / target_total) * target_duration, 1))
+
+            refs = ["role"]
+            if has_resume:
+                refs.append("resume")
+            if has_jd:
+                refs.append("jd")
+
+            competencies = [sec_name.lower()]
+            if sec.get("categoryName") or sec.get("category"):
+                competencies.append(str(sec.get("categoryName") or sec.get("category")).lower())
+
+            sections.append(
+                BlueprintSection(
+                    id=sec_id,
+                    type=sec_id,
+                    title=sec_name,
+                    objective=sec_obj,
+                    priority="high",
+                    target_question_count=sec_count,
+                    planned_primary_question_count=sec_count,
+                    target_minutes=target_mins,
+                    difficulty=[difficulty],
+                    context_refs=refs,
+                    competencies=competencies,
+                    applicable=True
+                )
+            )
+
+        total_planned = sum(s.planned_primary_question_count for s in sections if s.applicable)
+        return InterviewBlueprint(
+            version=1,
+            role=role,
+            difficulty=difficulty,
+            target_duration_minutes=target_duration,
+            question_count_mode=str(target_total),
+            total_planned_primary_questions=total_planned,
+            sections=sections,
+            global_rules={
+                "maxFollowUpsPerQuestion": 1,
+                "avoidSemanticDuplicates": True,
+                "evaluateOnlyAfterCompletion": True
+            },
+            context_availability=context_availability
+        )
+
     # Plan candidate sections
     candidate_section_ids = ["introduction", "projects"]
     include_experience = target_duration >= 35 or (has_resume and resume_evidence.get("has_work_experience", False))
@@ -1929,6 +2000,235 @@ def get_section_fallback_questions(
         ]
     }
 
+    # Map aliases
+    templates["scenario_based"] = templates["scenario"]
+    templates["general_hr"] = templates["behavioral"]
+
+    # Library Section Fallbacks
+    templates["programming_fundamentals"] = [
+        {"objective": "Assess Object-Oriented Programming and design principles", "text": f"How do OOP principles such as encapsulation, polymorphism, and composition over inheritance guide your modular architecture as a {role}?"},
+        {"objective": "Assess memory management, stack vs heap allocation, and garbage collection", "text": "Can you contrast stack vs heap memory allocation and explain how automatic garbage collection handles circular references?"},
+        {"objective": "Assess SOLID design principles in production systems", "text": "Walk me through how you apply the Single Responsibility and Dependency Inversion principles when designing a service component."},
+        {"objective": "Assess software design patterns and anti-patterns", "text": "Describe a scenario where you chose between the Strategy Pattern and the Observer Pattern. What trade-offs influenced your decision?"},
+        {"objective": "Assess immutability and thread safety", "text": "Why is data immutability critical in concurrent environments, and how do you guarantee thread safety without excessive lock contention?"},
+        {"objective": "Assess clean code principles and reducing cyclomatic complexity", "text": "What practices do you follow to keep code maintainable, readable, and resilient against regressions?"},
+        {"objective": "Assess exception handling and error propagation architecture", "text": "How do you design an application-wide exception handling strategy that isolates failures without masking unexpected system errors?"},
+        {"objective": "Assess static vs dynamic typing trade-offs", "text": "What are the structural trade-offs between static type systems and dynamic type systems in large-scale team environments?"},
+        {"objective": "Assess functional programming concepts applied to modern software", "text": "How do higher-order functions, pure functions, and currying improve testability and predictability in modern software?"},
+        {"objective": "Assess dependency injection and inversion of control", "text": "Explain how Dependency Injection decouples software modules from first principles, and how you verify it in automated tests."}
+    ]
+
+    templates["dsa"] = [
+        {"objective": "Assess algorithm complexity and asymptotic bounds", "text": "Explain the difference between worst-case, average-case, and amortized time complexity with concrete data structure examples."},
+        {"objective": "Assess graph traversal algorithms and real-world applications", "text": "When modeling connected networks, how do you decide between Breadth-First Search (BFS), Depth-First Search (DFS), and Dijkstra's algorithm?"},
+        {"objective": "Assess dynamic programming vs greedy heuristics", "text": "How do you identify optimal substructure and overlapping subproblems when deciding between Dynamic Programming and a Greedy approach?"},
+        {"objective": "Assess hash table collision resolution and scaling", "text": "How do hash collisions occur, and how do open addressing and separate chaining compare under high load factors?"},
+        {"objective": "Assess balanced tree structures and self-balancing mechanics", "text": "Compare Red-Black Trees, AVL Trees, and B-Trees in terms of read/write balance and disk-block alignment."},
+        {"objective": "Assess heap and priority queue applications", "text": "How does a binary min-heap provide efficient Top-K streaming computations, and what is its space/time overhead?"},
+        {"objective": "Assess string matching and prefix trees (Tries)", "text": "How would you design a high-throughput search autocomplete mechanism using a Trie or Aho-Corasick automaton?"},
+        {"objective": "Assess sorting algorithms under memory constraints", "text": "How do you sort a multi-terabyte dataset when system RAM is limited to 8GB? Walk through an External Merge Sort pipeline."},
+        {"objective": "Assess disjoint-set data structures (Union-Find)", "text": "Explain how path compression and union by rank achieve near-constant time operations in Union-Find."},
+        {"objective": "Assess bit manipulation techniques in systems programming", "text": "How can bitwise operations be utilized to design space-efficient bloom filters or permission flags?"}
+    ]
+
+    templates["javascript"] = [
+        {"objective": "Assess JavaScript runtime event loop and microtask scheduling", "text": "Explain how the V8 event loop differentiates between the call stack, microtask queue (Promise callbacks), and macrotask queue (setTimeout, I/O)."},
+        {"objective": "Assess closures, lexical environments, and preventing memory leaks", "text": "How do JavaScript closures retain memory references, and what common coding patterns cause silent memory leaks in long-running Node or browser apps?"},
+        {"objective": "Assess prototype inheritance vs ES6 class syntax", "text": "How does prototypal inheritance operate under the hood in JavaScript, and what happens when an object property lookup traverses the prototype chain?"},
+        {"objective": "Assess asynchronous programming with Promises and async/await", "text": "What happens when an unhandled Promise rejection occurs, and how do you coordinate parallel asynchronous tasks with Promise.allSettled vs Promise.all?"},
+        {"objective": "Assess browser rendering pipeline and event delegation", "text": "Explain the mechanics of event bubbling and capturing, and how event delegation optimizes memory consumption on pages with thousands of dynamic elements."},
+        {"objective": "Assess V8 engine optimizations and hidden classes", "text": "How do V8 hidden classes and inline caches optimize JavaScript property access, and how can inconsistent object shapes deoptimize performance?"},
+        {"objective": "Assess CommonJS vs ES Modules execution lifecycle", "text": "What are the fundamental differences between CommonJS runtime loading and ES Modules static analysis, particularly regarding circular dependencies?"},
+        {"objective": "Assess concurrency, Web Workers, and message passing", "text": "Since JavaScript is single-threaded, how do you offload CPU-intensive computations without freezing the main UI thread?"},
+        {"objective": "Assess client-side storage mechanisms and security", "text": "Compare localStorage, sessionStorage, and IndexedDB in terms of capacity, performance, and vulnerability to Cross-Site Scripting (XSS)."},
+        {"objective": "Assess debouncing and throttling implementations", "text": "How would you implement debounce and throttle utilities from scratch, and what are their respective use cases during high-frequency user events?"}
+    ]
+
+    templates["react_frontend"] = [
+        {"objective": "Assess React reconciliation and Fiber architecture", "text": "How does React's Fiber reconciler schedule work, prioritize updates, and differentiate between render and commit phases?"},
+        {"objective": "Assess hooks mechanics, closures, and dependency management", "text": "Explain how stale closures manifest in React hooks like useEffect and useCallback, and what strategies guarantee referential stability?"},
+        {"objective": "Assess Client-Side Rendering vs SSR vs React Server Components", "text": "Compare Client-Side Rendering (CSR), Server-Side Rendering (SSR), and React Server Components (RSC) regarding bundle size, hydration overhead, and SEO."},
+        {"objective": "Assess scalable state management trade-offs", "text": "When architecting a complex React application, how do you evaluate React Context, Redux Toolkit, Zustand, and server-cache solutions like TanStack Query?"},
+        {"objective": "Assess frontend bundle optimization and lazy loading", "text": "What strategies and build-tool plugins do you employ to analyze bundle size, eliminate dead code, and implement effective route and component-level code splitting?"},
+        {"objective": "Assess React error boundaries and graceful degradation", "text": "How do Error Boundaries isolate component tree failures, and what are their limitations with asynchronous operations and event handlers?"},
+        {"objective": "Assess form architecture and controlled vs uncontrolled components", "text": "How do you handle high-frequency form inputs and large dynamic forms in React without triggering unnecessary re-renders across the entire component tree?"},
+        {"objective": "Assess custom hook design and business logic abstraction", "text": "Walk me through how you design custom hooks to cleanly encapsulate complex side effects, browser APIs, or caching logic away from UI presentation."},
+        {"objective": "Assess web accessibility (a11y) and keyboard navigation", "text": "How do you ensure React single-page applications meet WCAG standards, manage focus during client-side navigation, and implement accessible modal dialogues?"},
+        {"objective": "Assess CSS architecture and performance in React", "text": "Compare CSS Modules, Tailwind CSS, and CSS-in-JS (Styled Components/Emotion) regarding runtime CSS injection overhead and build-time optimization."}
+    ]
+
+    templates["nodejs_backend"] = [
+        {"objective": "Assess Node.js Libuv thread pool and asynchronous I/O", "text": "How does Node.js achieve high concurrency on a single thread, and how does the Libuv thread pool handle file system and DNS operations?"},
+        {"objective": "Assess Node.js streams and backpressure handling", "text": "Explain what stream backpressure is, why it occurs during high-throughput I/O, and how you properly pipe readable streams into slower writable streams."},
+        {"objective": "Assess process clustering and multi-core CPU scaling", "text": "How does the Node.js cluster module distribute incoming network connections across multiple worker processes, and what are the session sharing implications?"},
+        {"objective": "Assess worker threads for CPU-bound computations", "text": "When would you choose Worker Threads over child processes for compute-intensive tasks, and how is memory shared or passed between threads?"},
+        {"objective": "Assess graceful shutdown and signal handling in Node.js", "text": "How do you implement a graceful shutdown handler in Node.js that stops accepting new connections, drains in-flight requests, and closes database pools cleanly?"},
+        {"objective": "Assess memory profiling and diagnosing heap leaks in Node.js", "text": "What profiling tools (like clinic.js or Chrome DevTools) and heap snapshot techniques do you use to locate uncollected memory leaks in Node.js?"},
+        {"objective": "Assess robust error handling: operational vs programmer errors", "text": "How do you structure Node.js error handling to distinguish between operational errors (network timeout) and programmer bugs without crashing the process ungracefully?"},
+        {"objective": "Assess middleware composition and request pipeline", "text": "Explain how middleware pipelines (like in Express or Fastify) execute sequentially, and how error-handling middleware intercept unhandled rejections."},
+        {"objective": "Assess backend security hardening in Node.js", "text": "What critical security defenses (such as Helmet headers, CORS policies, rate limiters, and prototype pollution defenses) must be configured in production Node.js services?"},
+        {"objective": "Assess native addons and foreign function interfaces", "text": "When and why would an engineering team implement native C++ addons via N-API, and what are the trade-offs regarding build complexity?"}
+    ]
+
+    templates["fullstack"] = [
+        {"objective": "Assess end-to-end request lifecycle and architecture", "text": f"Walk me through the complete end-to-end lifecycle of a web request for a {role} application, from DNS lookup and TLS termination to API routing, database transactions, and client rendering."},
+        {"objective": "Assess API paradigms: REST vs GraphQL vs gRPC", "text": "Compare REST, GraphQL, and gRPC in terms of network efficiency, schema strictness, client data flexibility, and caching overhead."},
+        {"objective": "Assess authentication and session management", "text": "Contrast JWT stored in localStorage versus HttpOnly SameSite cookies. How do you design secure token refresh mechanisms?"},
+        {"objective": "Assess client-server data synchronization and optimistic UI", "text": "How do you implement optimistic UI updates on the frontend while guaranteeing rollback consistency if the backend mutation rejects?"},
+        {"objective": "Assess multi-tier caching architectures", "text": "How do you design a coherent caching strategy spanning browser caches, CDN edges, reverse proxies, in-memory Redis, and database query caches?"},
+        {"objective": "Assess database connection pooling across environments", "text": "How do you manage database connection pooling when backend services run in serverless environments versus long-lived container clusters?"},
+        {"objective": "Assess real-time communication architectures", "text": "When building real-time interactive features, how do you decide between WebSockets, Server-Sent Events (SSE), and Short/Long Polling?"},
+        {"objective": "Assess zero-downtime fullstack deployments and CI/CD", "text": "How do you orchestrate zero-downtime blue-green or canary deployments when both frontend bundles and backend database schemas are evolving simultaneously?"},
+        {"objective": "Assess fullstack distributed tracing and observability", "text": "How do you propagate correlation IDs and OpenTelemetry context from the client browser through microservices to distributed database logs?"},
+        {"objective": "Assess responsive web performance and Core Web Vitals", "text": "What fullstack optimizations directly target Largest Contentful Paint (LCP), Interaction to Next Paint (INP), and Cumulative Layout Shift (CLS)?"}
+    ]
+
+    templates["dbms_sql"] = [
+        {"objective": "Assess ACID properties and Write-Ahead Logging (WAL)", "text": "Explain how ACID properties are enforced under the hood, and how Write-Ahead Logging ensures Durability and crash recovery."},
+        {"objective": "Assess database indexing structures and query execution plans", "text": "Compare B-Tree indexes, Hash indexes, and GIN indexes. How do you interpret an EXPLAIN ANALYZE plan to identify sequential table scans?"},
+        {"objective": "Assess transaction isolation levels and concurrency anomalies", "text": "Explain the differences between Read Committed, Repeatable Read, and Serializable isolation levels, and describe the anomalies (dirty reads, non-repeatable reads, phantom reads, write skew) each prevents."},
+        {"objective": "Assess relational database normalization vs denormalization", "text": "When is it appropriate to denormalize a relational database schema from 3NF, and what read-write trade-offs do you evaluate?"},
+        {"objective": "Assess SQL query optimization and resolving slow queries", "text": "What systematic steps do you take when a critical business query suddenly slows down from 50ms to 5 seconds under production load?"},
+        {"objective": "Assess database sharding and horizontal partitioning", "text": "How do you select a good shard key when partitioning a relational database across multiple nodes, and how do you handle cross-shard queries?"},
+        {"objective": "Assess master-replica replication and read replica lag", "text": "How does database replication lag occur, and how do you guarantee read-your-own-writes consistency for users after they submit mutations?"},
+        {"objective": "Assess zero-downtime database schema migrations", "text": "How do you safely rename a column or add a non-null constraint with a default value on a table with 100 million rows without locking writes?"},
+        {"objective": "Assess database deadlock detection and mitigation", "text": "What causes database deadlocks during concurrent multi-table transactions, and what application patterns prevent them?"},
+        {"objective": "Assess SQL vs NoSQL architectural decision making", "text": "Under what specific data access patterns, consistency requirements, and scaling dimensions would you choose a document store or wide-column store over Postgres?"}
+    ]
+
+    templates["os"] = [
+        {"objective": "Assess process vs thread memory models and context switching", "text": "Compare processes and threads in terms of address space, memory isolation, scheduling overhead, and context switching latency."},
+        {"objective": "Assess virtual memory, paging, and Translation Lookaside Buffers (TLB)", "text": "Explain how the operating system and MMU translate virtual addresses to physical frames using page tables, and what occurs during a page fault."},
+        {"objective": "Assess CPU scheduling algorithms and preemption", "text": "How do modern operating system schedulers (like Linux Completely Fair Scheduler) balance interactive latency with batch throughput?"},
+        {"objective": "Assess Inter-Process Communication (IPC) mechanisms", "text": "Compare IPC mechanisms (pipes, UNIX domain sockets, shared memory, and message queues) regarding bandwidth, synchronization overhead, and security boundaries."},
+        {"objective": "Assess concurrency synchronization primitives", "text": "Explain the differences between spinlocks, mutexes, condition variables, and counting semaphores, and when each is appropriate."},
+        {"objective": "Assess deadlock conditions and Coffman criteria", "text": "What are the four Coffman conditions necessary for a deadlock, and how can resource ordering prevent circular wait?"},
+        {"objective": "Assess file system architecture and inodes", "text": "How do file descriptors, the open file table, and disk inodes collaborate when an application reads data from a storage device?"},
+        {"objective": "Assess user mode vs kernel mode transitions and system calls", "text": "What happens at the hardware and register level when an application invokes a system call (like read or fork), and what is the overhead?"},
+        {"objective": "Assess Linux I/O models: blocking, non-blocking, and epoll", "text": "Compare blocking I/O, non-blocking I/O, and event-driven I/O multiplexing (select/poll vs epoll vs io_uring) in terms of scalability."},
+        {"objective": "Assess memory fragmentation and page reclamation", "text": "How does the OS kernel mitigate internal and external memory fragmentation, and what triggers the Out-Of-Memory (OOM) killer?"}
+    ]
+
+    templates["networks"] = [
+        {"objective": "Assess TCP handshake, flow control, and congestion control", "text": "Walk me through the TCP 3-way handshake and 4-way teardown. How do sliding windows and congestion control algorithms (like CUBIC or BBR) prevent network saturation?"},
+        {"objective": "Assess TLS 1.3 handshake and modern cryptography", "text": "Explain the TLS 1.3 handshake sequence, how session resumption with 0-RTT works, and the security benefits of Perfect Forward Secrecy."},
+        {"objective": "Assess HTTP/1.1 vs HTTP/2 vs HTTP/3 (QUIC)", "text": "How did HTTP/2 solve head-of-line blocking at the application layer, why did head-of-line blocking persist at the transport layer, and how does HTTP/3 with QUIC resolve it?"},
+        {"objective": "Assess DNS resolution lifecycle and Anycast routing", "text": "Walk me through the end-to-end DNS resolution hierarchy for a domain name, and how Anycast routing directs clients to the nearest DNS name server."},
+        {"objective": "Assess Layer 4 vs Layer 7 load balancing", "text": "Compare Layer 4 (Transport) and Layer 7 (Application) load balancing in terms of throughput, SSL termination, and content-based routing capabilities."},
+        {"objective": "Assess CDN edge caching and cache invalidation strategies", "text": "How do CDNs handle cache key generation, stale-while-revalidate headers, and instant cache purging across distributed edge nodes?"},
+        {"objective": "Assess Network Address Translation (NAT) and private routing", "text": "How does NAT allow thousands of internal hosts to communicate across the internet using a single public IP address, and what are its implications for peer-to-peer connections?"},
+        {"objective": "Assess WebSockets vs TCP socket streaming", "text": "How does a WebSocket connection upgrade over HTTP, and how do client and server maintain persistent bidirectional communication with low framing overhead?"},
+        {"objective": "Assess network security: DDoS mitigation and SYN floods", "text": "How does a SYN flood attack exploit TCP connection state, and how do SYN cookies mitigate the attack without exhausting server resources?"},
+        {"objective": "Assess packet encapsulation across the OSI model", "text": "Explain how data payloads are encapsulated with headers across Application, Transport, Network, and Data Link layers during transmission."}
+    ]
+
+    templates["system_design"] = [
+        {"objective": "Assess distributed system architecture and scalability", "text": "How would you design a scalable distributed URL shortening service capable of handling 50,000 writes per second and 500,000 reads per second with sub-10ms latency?"},
+        {"objective": "Assess distributed message queuing and streaming", "text": "Design a distributed message queue like Apache Kafka. How do you guarantee message ordering, partition rebalancing, and consumer offset tracking?"},
+        {"objective": "Assess distributed caching and consistent hashing", "text": "How would you design a distributed in-memory cache cluster using consistent hashing and virtual nodes to handle node additions and failures gracefully?"},
+        {"objective": "Assess real-time collaborative editing architecture", "text": "How would you architect a real-time collaborative document editing service (like Google Docs) using Operational Transformation (OT) or CRDTs?"},
+        {"objective": "Assess global notification delivery systems", "text": "Design a high-volume notification service that delivers push, SMS, and email alerts across millions of users while enforcing rate limits and priority queues."},
+        {"objective": "Assess large-scale media streaming platform", "text": "Design a video-on-demand streaming service (like Netflix). How do you handle chunked uploads, transcoding pipelines, and adaptive bitrate delivery via CDNs?"},
+        {"objective": "Assess idempotent payment processing pipeline", "text": "Design a resilient payment processing gateway that guarantees exactly-once transaction processing even during network retries and service crashes."},
+        {"objective": "Assess distributed rate limiting across global proxies", "text": "How would you design a globally distributed rate limiting system that enforces client quotas across 100 edge clusters without introducing centralized database bottlenecks?"},
+        {"objective": "Assess typeahead search autocomplete system", "text": "Design a search autocomplete service that suggests relevant queries in real time with p99 latency under 20ms over a database of billions of past searches."},
+        {"objective": "Assess ride-sharing real-time geospatial dispatch system", "text": "Design a geospatial matching system for a ride-sharing service that tracks millions of active drivers and matches riders with minimal latency."}
+    ]
+
+    templates["ai_ml_rag"] = [
+        {"objective": "Assess vector embeddings and similarity search algorithms", "text": "Explain how high-dimensional vector embeddings represent semantic meaning, and compare Approximate Nearest Neighbor (ANN) index algorithms like HNSW versus IVF-Flat."},
+        {"objective": "Assess chunking strategies and retrieval quality in RAG", "text": "How do chunk size, chunk overlap, and hierarchical chunking strategies impact retrieval recall and precision in a production RAG pipeline?"},
+        {"objective": "Assess hybrid search and cross-encoder re-ranking", "text": "Why is hybrid search (combining sparse BM25 and dense embeddings) superior to dense retrieval alone, and how do cross-encoders improve final context relevance?"},
+        {"objective": "Assess LLM hallucination mitigation and grounding", "text": "What prompt engineering, citation grounding, and guardrail techniques do you implement to ensure LLMs do not fabricate facts outside retrieved context?"},
+        {"objective": "Assess prompt injection defenses and AI safety", "text": "How do you protect LLM applications against indirect prompt injection attacks embedded in untrusted user documents or external web pages?"},
+        {"objective": "Assess Fine-Tuning vs RAG vs In-Context Learning", "text": "What criteria and performance trade-offs dictate whether an engineering team should use RAG, parameter-efficient fine-tuning (LoRA), or full model fine-tuning?"},
+        {"objective": "Assess model quantization and inference latency optimization", "text": "How does model quantization (e.g. INT8 or INT4) reduce VRAM requirements and inference latency, and what are the trade-offs in perplexity?"},
+        {"objective": "Assess quantitative evaluation frameworks for RAG", "text": "How do you quantitatively evaluate RAG pipelines using metrics like context recall, context precision, faithfulness, and answer relevance?"},
+        {"objective": "Assess context window management and token budget optimization", "text": "How do you manage token budgets and avoid the 'lost-in-the-middle' effect when feeding large multi-document contexts to LLMs?"},
+        {"objective": "Assess agentic AI architectures and tool use", "text": "How do agentic reasoning loops (like ReAct or LangGraph state machines) handle tool execution errors, infinite loops, and state persistence?"}
+    ]
+
+    templates["cloud_devops"] = [
+        {"objective": "Assess containerization best practices and Docker security", "text": "How do multi-stage Docker builds, non-root users, and minimal base images (like distroless or alpine) optimize container build times and security?"},
+        {"objective": "Assess Kubernetes cluster architecture and pod scheduling", "text": "Explain the responsibilities of the Kubernetes control plane components, and how the scheduler utilizes node affinity, taints, and tolerations."},
+        {"objective": "Assess Infrastructure as Code (IaC) with Terraform", "text": "How do you manage remote state locks, modularize infrastructure, and detect/remediate state drift when using Terraform across multiple environments?"},
+        {"objective": "Assess CI/CD pipeline automation and deployment strategies", "text": "Contrast Blue/Green deployments, Canary releases, and Rolling updates in terms of deployment risk, resource cost, and rollback complexity."},
+        {"objective": "Assess cloud multi-region high availability and disaster recovery", "text": "How do you architect an active-active multi-region deployment on AWS/GCP to achieve stringent RTO (Recovery Time Objective) and RPO (Recovery Point Objective) targets?"},
+        {"objective": "Assess cloud cost optimization and autoscaling", "text": "What strategies do you use to balance cloud infrastructure costs with reliability, including Horizontal Pod Autoscalers (HPA), Karpenter, and spot instances?"},
+        {"objective": "Assess cloud security, IAM least privilege, and secrets management", "text": "How do you enforce least-privilege IAM policies, manage temporary credential rotation, and integrate secrets management solutions like HashiCorp Vault or AWS Secrets Manager?"},
+        {"objective": "Assess cloud observability and distributed tracing", "text": "How do you configure an end-to-end observability stack using Prometheus, Grafana, Loki, and OpenTelemetry to detect incidents before users report them?"},
+        {"objective": "Assess service mesh architecture (Istio/Linkerd)", "text": "What problems does a service mesh solve regarding mutual TLS (mTLS), traffic splitting, and distributed observability across microservices?"},
+        {"objective": "Assess cloud storage tiers and data lifecycle policies", "text": "How do you design automated lifecycle policies across cloud object storage tiers (hot, cool, cold, archive) to optimize costs without impacting recovery SLAs?"}
+    ]
+
+    templates["cybersecurity"] = [
+        {"objective": "Assess OWASP Top 10 vulnerabilities and modern mitigations", "text": "Walk me through the most critical vulnerabilities in the OWASP Top 10 and how modern application frameworks mitigate them by default."},
+        {"objective": "Assess SQL Injection and command injection prevention", "text": "How do parameterized queries prevent SQL injection at the protocol level, and what are the subtle ways developers still introduce injection vulnerabilities?"},
+        {"objective": "Assess Cross-Site Scripting (XSS) and Content Security Policy (CSP)", "text": "Compare Stored, Reflected, and DOM-based XSS attacks. How do strict Content Security Policies and context-aware output encoding eliminate XSS vectors?"},
+        {"objective": "Assess Cross-Site Request Forgery (CSRF) defenses", "text": "How do anti-CSRF synchronizer tokens and SameSite cookie attributes (Strict vs Lax) defend against cross-site state-changing requests?"},
+        {"objective": "Assess secure password storage and hashing algorithms", "text": "Why are standard cryptographic hashes (MD5, SHA-256) unsuitable for password storage, and how do memory-hard algorithms like bcrypt or Argon2 protect against GPU cracking?"},
+        {"objective": "Assess secure session management and token security", "text": "How do you design session management to prevent session hijacking, session fixation, and replay attacks across mobile and web clients?"},
+        {"objective": "Assess Zero Trust security architecture", "text": "What core principles define a Zero Trust architecture, and how do identity-aware proxies replace traditional perimeter-based corporate VPNs?"},
+        {"objective": "Assess Public Key Infrastructure (PKI) and mTLS", "text": "Explain how mutual TLS (mTLS) provides bidirectional cryptographic authentication and encryption between microservices."},
+        {"objective": "Assess API security and Broken Object Level Authorization (BOLA)", "text": "Why is BOLA/IDOR one of the most common API vulnerabilities, and how do you enforce centralized authorization checks across all resource endpoints?"},
+        {"objective": "Assess secure software supply chain and dependency scanning", "text": "How do you integrate automated Software Composition Analysis (SCA) and SAST tools into CI/CD pipelines to catch vulnerable dependencies before production?"}
+    ]
+
+    templates["testing_qa"] = [
+        {"objective": "Assess testing pyramid strategy and testing ROI", "text": "How do you balance unit tests, integration tests, and end-to-end tests to achieve high confidence with fast execution feedback?"},
+        {"objective": "Assess Test-Driven Development (TDD) principles", "text": "Walk me through the red-green-refactor cycle of TDD and how writing tests first influences software architecture and interface design."},
+        {"objective": "Assess test doubles: mocks, stubs, spies, and fakes", "text": "Explain the differences between mocks, stubs, spies, dummies, and fakes. When is over-mocking detrimental to test reliability?"},
+        {"objective": "Assess integration testing with Testcontainers", "text": "Why are lightweight disposable Docker containers (like Testcontainers) preferable to in-memory databases (like H2 or SQLite) for integration testing?"},
+        {"objective": "Assess property-based testing and boundary validation", "text": "What is property-based testing (e.g. fast-check or Hypothesis), and how does it uncover edge-case defects that example-based testing misses?"},
+        {"objective": "Assess load, stress, and performance testing", "text": "How do you structure realistic load and spike testing using tools like k6 or JMeter to determine system breaking points and memory leak thresholds?"},
+        {"objective": "Assess code coverage metrics vs mutation testing", "text": "Why can high line coverage be misleading, and how does mutation testing verify that tests actually catch semantic regressions?"},
+        {"objective": "Assess flaky test root-cause diagnosis and remediation", "text": "What are the primary causes of test flakiness in CI pipelines (timing, shared state, unmocked network), and how do you systematically eradicate them?"},
+        {"objective": "Assess consumer-driven contract testing for microservices", "text": "How does contract testing (e.g. Pact) ensure backwards compatibility between microservices without spinning up full end-to-end environments?"},
+        {"objective": "Assess automated security and regression testing in CI", "text": "How do you incorporate automated security scans (DAST/SAST) and smoke tests into deployment verification workflows?"}
+    ]
+
+    templates["java_spring"] = [
+        {"objective": "Assess JVM memory architecture and garbage collection", "text": "Explain the structure of JVM memory (Heap generations, Metaspace, Stack) and compare the operational characteristics of G1GC versus ZGC."},
+        {"objective": "Assess Spring Inversion of Control and Bean lifecycle", "text": "Walk me through the Spring Bean lifecycle from instantiation and dependency injection through BeanPostProcessors to initialization and destruction callbacks."},
+        {"objective": "Assess Spring Boot auto-configuration mechanisms", "text": "How does Spring Boot's conditional configuration (@ConditionalOnClass, @ConditionalOnMissingBean) work under the hood when bootstrapping starters?"},
+        {"objective": "Assess Spring Security architecture and FilterChain", "text": "Explain how the Spring Security FilterChain intercepts requests, performs authentication via AuthenticationManager, and verifies authorization via SecurityContextHolder."},
+        {"objective": "Assess JPA / Hibernate entity lifecycles and caching tiers", "text": "Describe the states of an entity in Hibernate (transient, persistent, detached, removed) and how first-level vs second-level caching works."},
+        {"objective": "Assess resolving the N+1 select problem in Hibernate", "text": "What causes the N+1 select query problem in JPA relationships, and how do you resolve it using JOIN FETCH, EntityGraphs, or batch fetching?"},
+        {"objective": "Assess Spring @Transactional boundaries and propagation", "text": "Explain how Spring @Transactional proxies manage database transactions, and how propagation levels (REQUIRED vs REQUIRES_NEW) behave when exceptions occur."},
+        {"objective": "Assess reactive Java programming with Spring WebFlux", "text": "How does Spring WebFlux with Project Reactor achieve non-blocking concurrency, and when should you choose it over traditional Spring MVC with Virtual Threads?"},
+        {"objective": "Assess Java Virtual Threads (Project Loom) mechanics", "text": "How do Virtual Threads in modern Java differ from platform OS threads, and how do they impact blocking I/O and carrier thread scheduling?"},
+        {"objective": "Assess modern Java Streams API and performance trade-offs", "text": "What are the performance characteristics and memory overheads of Java Streams compared to traditional loops, especially when dealing with boxing/unboxing?"}
+    ]
+
+    templates["php_laravel"] = [
+        {"objective": "Assess PHP request lifecycle and OPcache mechanics", "text": "Explain how PHP-FPM executes requests in a shared-nothing architecture, and how OPcache optimizes script execution across concurrent requests."},
+        {"objective": "Assess Laravel Service Container and Service Providers", "text": "How does the Laravel Service Container resolve dependencies using reflection, and what is the difference between registering singletons, bindings, and scoped instances?"},
+        {"objective": "Assess Eloquent ORM performance and eager loading", "text": "How does Eloquent handle relationships, and what methods (like with() and load()) do you use to eliminate N+1 query bottlenecks in production?"},
+        {"objective": "Assess Laravel middleware pipeline and execution flow", "text": "How does the Laravel HTTP middleware pipeline work, and how do before-middleware and after-middleware process incoming requests and outgoing responses?"},
+        {"objective": "Assess Laravel queue workers and background job processing", "text": "How do Laravel queues manage job dispatching, worker timeouts, rate limiting, and failed job retries backed by Redis or database drivers?"},
+        {"objective": "Assess Laravel event broadcasting and real-time WebSockets", "text": "How does Laravel broadcast events to frontend applications using Pusher or Laravel Reverb, and how are private channels authenticated?"},
+        {"objective": "Assess Laravel authentication and authorization (Gates and Policies)", "text": "Contrast Laravel Gates and Policies for authorization, and how do you integrate Laravel Sanctum or Passport for token-based API authentication?"},
+        {"objective": "Assess database migrations, seeders, and model factories in Laravel", "text": "How do you structure database migrations and model factories to ensure isolated, repeatable test suites using the RefreshDatabase trait?"},
+        {"objective": "Assess caching strategies and taggable cache in Laravel", "text": "How do you implement cache tagging in Laravel to selectively invalidate cached queries and models when underlying records update?"},
+        {"objective": "Assess modern PHP features in Laravel applications", "text": "How do typed properties, constructor property promotion, match expressions, and attributes enhance clean architecture in modern Laravel?"}
+    ]
+
+    # Dynamic fallback generator for custom topic sections or unlisted categories
+    if section_id not in templates:
+        custom_topic_name = section_id.replace("custom_", "").replace("_", " ").title()
+        templates[section_id] = [
+            {"objective": f"Assess core principles and architecture of {custom_topic_name}", "text": f"How do the core architectural principles and mechanisms of {custom_topic_name} influence your engineering approach as a {role}?"},
+            {"objective": f"Assess practical problem solving and edge cases in {custom_topic_name}", "text": f"What are the most challenging edge cases or performance bottlenecks you have encountered when working with {custom_topic_name}, and how did you resolve them?"},
+            {"objective": f"Assess architectural trade-offs in {custom_topic_name}", "text": f"When implementing {custom_topic_name} in a production system, what trade-offs do you evaluate against alternative technologies or paradigms?"},
+            {"objective": f"Assess debugging and failure recovery in {custom_topic_name}", "text": f"Walk me through your diagnostic and debugging methodology when investigating a degraded state or silent error in a {custom_topic_name} implementation."},
+            {"objective": f"Assess scalability and concurrency handling in {custom_topic_name}", "text": f"How do you design a {custom_topic_name} solution to scale horizontally and maintain low latency under heavy concurrent load?"},
+            {"objective": f"Assess security and data integrity in {custom_topic_name}", "text": f"What critical security considerations, data integrity concerns, or access boundaries must be enforced when deploying {custom_topic_name} into production?"},
+            {"objective": f"Assess testing and automated verification strategy for {custom_topic_name}", "text": f"What testing strategy and tooling do you use to ensure comprehensive unit and integration test coverage for components utilizing {custom_topic_name}?"},
+            {"objective": f"Assess operational observability and monitoring in {custom_topic_name}", "text": f"What metrics, logs, and health indicators would you expose to monitor the operational health and reliability of {custom_topic_name} in production?"},
+            {"objective": f"Assess modern industry best practices for {custom_topic_name}", "text": f"How have recent advancements or modern best practices changed the way engineering teams design and maintain {custom_topic_name} systems?"},
+            {"objective": f"Assess refactoring and technical debt management in {custom_topic_name}", "text": f"If you inherited a legacy codebase heavily reliant on {custom_topic_name}, how would you approach refactoring it safely without breaking existing business functionality?"}
+        ]
+
     sec_templates = templates.get(section_id, templates["technical_concepts"])
     return sec_templates[:count]
 
@@ -1987,18 +2287,37 @@ def generate_section_batch(request: SectionBatchRequest) -> SectionBatchResponse
                 "skills": f"core technical skills frameworks tools libraries hands-on application {role}",
                 "technical_concepts": f"language mechanics internals memory concurrency algorithms {role}",
                 "scenario": f"incident failure scaling trade-offs latency performance production {role}",
-                "behavioral": "conflict resolution teamwork ownership mistakes communication STAR"
+                "scenario_based": f"production incident outage cascading failure scaling latency trade-offs {role}",
+                "behavioral": "conflict resolution teamwork ownership mistakes communication STAR",
+                "general_hr": "career background behavioral leadership teamwork communication culture fit STAR",
+                "programming_fundamentals": f"OOP principles memory management garbage collection design patterns clean code {role}",
+                "dsa": "data structures algorithms complexity trees graphs dynamic programming optimization",
+                "javascript": "javascript event loop closures prototypes async promises microtasks browser engine",
+                "react_frontend": "react virtual dom hooks reconciliation rendering state management frontend performance",
+                "nodejs_backend": "node.js libuv event loop streams backpressure clustering microservices backend",
+                "fullstack": f"fullstack web architecture REST GraphQL state authentication database {role}",
+                "dbms_sql": "SQL queries database indexing transactions ACID locks sharding replication query planning",
+                "os": "operating systems processes threads memory paging context switching IPC kernel CPU scheduling",
+                "networks": "computer networking TCP UDP HTTP TLS handshake DNS sockets routing OSI layers",
+                "system_design": "distributed system design scalability microservices caching load balancing message queues",
+                "ai_ml_rag": "artificial intelligence machine learning embeddings RAG vector database LLMs fine-tuning",
+                "cloud_devops": "cloud AWS GCP Azure Docker Kubernetes CI CD infrastructure as code Terraform",
+                "cybersecurity": "cybersecurity OWASP web vulnerabilities authentication authorization cryptography encryption",
+                "testing_qa": "software testing unit integration end to end TDD test automation regression QA",
+                "java_spring": "Java JVM memory Spring Boot dependency injection Spring Security Hibernate ORM",
+                "php_laravel": "PHP modern practices Laravel MVC Eloquent ORM routing queues middleware"
             }
-            q_str = query_map.get(section_id, f"core competencies for {role}")
+            cleaned_topic = section_id.replace("custom_", "").replace("_", " ")
+            q_str = query_map.get(section_id, f"{cleaned_topic} practical engineering application {role}")
 
-            # Query resume if available and relevant
-            if resume_id and section_id in ["projects", "experience", "skills"]:
+            # Query resume if available
+            if resume_id:
                 r_res = store.search(query=q_str, user_id=user_id, document_id=resume_id, top_k=3)
                 if r_res and "documents" in r_res and r_res["documents"] and r_res["documents"][0]:
                     grounding_chunks.extend([f"[Candidate Resume] {d.strip()}" for d in r_res["documents"][0] if d and d.strip()])
 
-            # Query JD if available and relevant
-            if jd_id and section_id in ["skills", "scenario", "technical_concepts"]:
+            # Query JD if available
+            if jd_id:
                 j_res = store.search(query=q_str, user_id=user_id, document_id=jd_id, top_k=3)
                 if j_res and "documents" in j_res and j_res["documents"] and j_res["documents"][0]:
                     grounding_chunks.extend([f"[Job Description] {d.strip()}" for d in j_res["documents"][0] if d and d.strip()])
@@ -2012,6 +2331,36 @@ def generate_section_batch(request: SectionBatchRequest) -> SectionBatchResponse
 
     try:
         llm = LLMClient().get_llm()
+        is_scenario = (
+            section_id in ["scenario", "scenario_based"]
+            or getattr(request, "scenarioFocus", False)
+            or getattr(request, "scenario_focus", False)
+            or "scenario" in section_id.lower()
+        )
+        is_custom = (
+            getattr(request, "isCustom", False)
+            or getattr(request, "is_custom", False)
+            or section_id.startswith("custom_")
+        )
+
+        scenario_instructions = ""
+        if is_scenario:
+            scenario_instructions = (
+                "2. REALISTIC WORKPLACE & PRODUCTION SCENARIOS: Frame each question as a concrete engineering challenge, "
+                "production outage, high-concurrency bottleneck, database deadlock, or cascading failure. Require the candidate to "
+                "diagnose root causes, discuss trade-offs, and describe step-by-step mitigation and prevention.\n"
+            )
+
+        custom_instructions = ""
+        if is_custom:
+            custom_topic = section_id.replace("custom_", "").replace("_", " ").title()
+            custom_instructions = (
+                f"2. CUSTOM TOPIC DEPTH: All questions must focus specifically on '{custom_topic}'. "
+                f"Assess core mechanics, internal implementation, production edge cases, performance considerations, and real-world trade-offs for a {role}.\n"
+            )
+
+        specialized_rule = scenario_instructions or custom_instructions or ""
+
         system_prompt = (
             f"You are PrepNova's senior technical interviewer. Generate an ordered batch of exactly {planned_count} "
             f"primary interview questions for the section '{section_id}'.\n"
@@ -2021,10 +2370,11 @@ def generate_section_batch(request: SectionBatchRequest) -> SectionBatchResponse
             f"Target Competencies: {', '.join(request.competencies) if request.competencies else 'Core role skills'}\n\n"
             "CRITICAL RULES:\n"
             f"1. SCOPE: Generate questions for section '{section_id}' ONLY. Do NOT generate questions for any other section.\n"
-            "2. ZERO FILLER: Every question must be direct, independent, and professional. NEVER use conversational filler ('Okay', 'Thank you for sharing', 'Great', 'Thanks for your answer', 'Based on what you said').\n"
-            f"3. STRICT NON-REPETITION: Do NOT repeat, rephrase, or overlap with any previously asked questions in this session.\n"
-            "4. ACCURACY: Base questions on provided context and standard role competencies. Do NOT invent candidate employers, metrics, or technologies not mentioned in the context.\n"
-            "5. OUTPUT SCHEMA: Return a valid JSON array of objects only:\n"
+            f"{specialized_rule}"
+            "3. ZERO FILLER: Every question must be direct, independent, and professional. NEVER use conversational filler ('Okay', 'Thank you for sharing', 'Great', 'Thanks for your answer', 'Based on what you said').\n"
+            f"4. STRICT NON-REPETITION: Do NOT repeat, rephrase, or overlap with any previously asked questions in this session.\n"
+            "5. ACCURACY: Base questions on provided context and standard role competencies. Do NOT invent candidate employers, metrics, or technologies not mentioned in the context.\n"
+            "6. OUTPUT SCHEMA: Return a valid JSON array of objects only:\n"
             "[\n"
             "  {\n"
             "    \"order\": 1,\n"

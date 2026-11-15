@@ -315,7 +315,10 @@ class AiServiceClient {
         user_id: params.userId || null,
         section_objective: params.sectionObjective || null,
         competencies: params.competencies || [],
-        already_asked_questions: params.alreadyAskedQuestions || []
+        already_asked_questions: params.alreadyAskedQuestions || [],
+        practice_mode: params.practiceMode || params.practice_mode || "complete",
+        is_custom: Boolean(params.isCustom ?? params.is_custom),
+        scenario_focus: Boolean(params.scenarioFocus ?? params.scenario_focus ?? (params.sectionId === "scenario_based" || params.sectionId === "scenario"))
       });
       const data = response.data;
       if (data && typeof data === "object") {

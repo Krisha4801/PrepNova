@@ -39,6 +39,8 @@ class GenerateQuestionRequest(BaseModel):
     history: List[PreviousQA] = Field(default_factory=list)
     asked_question_ids: List[str] = Field(default_factory=list)
     focus_areas: List[str] = Field(default_factory=list)
+    practice_mode: Optional[str] = "complete"
+    selected_sections: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class GeneratedQuestion(BaseModel):
@@ -144,6 +146,8 @@ class PlanBlueprintRequest(BaseModel):
     max_questions: Optional[int] = None
     question_count_mode: Optional[str] = None
     focus_areas: List[str] = Field(default_factory=list)
+    practice_mode: Optional[str] = "complete"
+    selected_sections: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 # =========================================================
@@ -181,6 +185,9 @@ class SectionBatchRequest(BaseModel):
     sectionObjective: Optional[str] = Field(alias="section_objective", default=None)
     competencies: List[str] = Field(default_factory=list)
     alreadyAskedQuestions: List[str] = Field(alias="already_asked_questions", default_factory=list)
+    practiceMode: Optional[str] = Field(alias="practice_mode", default="complete")
+    isCustom: Optional[bool] = Field(alias="is_custom", default=False)
+    scenarioFocus: Optional[bool] = Field(alias="scenario_focus", default=False)
 
     model_config = {
         "populate_by_name": True,
