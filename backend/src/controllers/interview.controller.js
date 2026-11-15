@@ -500,6 +500,141 @@ exports.startInterview = async (req, res, next) => {
   }
 };
 
+
+/**
+ * Computes section-wise scorecard evaluations, scores, strengths, weaknesses, and improvement suggestions.
+ */
+function buildSectionWiseEvaluations(session, evaluations, batchResult) {
+  const sectionBreakdown = {};
+  const blueprintSections = session.blueprint?.sections || [];
+  const selectedSections = session.selectedSections || [];
+
+  // Collect all section definitions from blueprint, selectedSections, and questions
+  const sectionMap = new Map();
+  blueprintSections.forEach((s) => {
+    if (s && s.id) {
+      sectionMap.set(s.id, {
+        id: s.id,
+        name: s.title || s.name || s.id.replace(/_/g, " "),
+        objective: s.objective || ""
+      });
+    }
+  });
+  selectedSections.forEach((s) => {
+    if (s && s.id) {
+      sectionMap.set(s.id, {
+        id: s.id,
+        name: s.name || s.title || s.id.replace(/_/g, " "),
+        objective: s.description || s.objective || ""
+      });
+    }
+  });
+  (session.questions || []).forEach((q) => {
+    if (q && q.sectionId && !sectionMap.has(q.sectionId)) {
+      sectionMap.set(q.sectionId, {
+        id: q.sectionId,
+        name: q.category || q.sectionId.replace(/_/g, " "),
+        objective: ""
+      });
+    }
+  });
+
+  const rawSummaries = batchResult?.section_summaries || {};
+
+  sectionMap.forEach((meta, secId) => {
+    // Find all evaluated turns belonging to this section
+    const turns = evaluations.filter((ev) => {
+      const turnSecId = ev.sectionId || ev.section_id || session.questions[ev.questionIndex]?.sectionId;
+      return turnSecId === secId;
+    });
+
+    if (turns.length === 0 && !session.selectedSections?.some((s) => s.id === secId)) {
+      return;
+    }
+
+    const turnScores = turns.map((t) => Number(t.score || 0));
+    const avgScore = turnScores.length
+      ? Math.round((turnScores.reduce((a, b) => a + b, 0) / turnScores.length) * 10) / 10
+      : 0;
+
+    const strengths = [];
+    const weaknesses = [];
+    const suggestions = [];
+
+    turns.forEach((t) => {
+      (t.strengths || []).forEach((s) => uniquePush(strengths, s));
+      (t.areasOfImprovement || t.areas_of_improvement || []).forEach((w) => uniquePush(weaknesses, w));
+    });
+
+    // Extract from AI batch section summaries if available
+    const aiSummary = rawSummaries[secId];
+    let summaryText = "";
+    if (typeof aiSummary === "string") {
+      summaryText = aiSummary;
+    } else if (aiSummary && typeof aiSummary === "object") {
+      summaryText = aiSummary.summary || aiSummary.feedback || "";
+      (aiSummary.strengths || []).forEach((s) => uniquePush(strengths, s));
+      (aiSummary.weaknesses || []).forEach((w) => uniquePush(weaknesses, w));
+      (aiSummary.improvement_suggestions || aiSummary.improvementSuggestions || []).forEach((sg) => uniquePush(suggestions, sg));
+    }
+
+    if (!summaryText) {
+      if (avgScore >= 8.0) {
+        summaryText = `Demonstrated strong mastery and clear technical depth in ${meta.name}.`;
+      } else if (avgScore >= 6.0) {
+        summaryText = `Showed good foundational knowledge in ${meta.name} with opportunities for more concrete technical trade-offs.`;
+      } else if (turns.length > 0) {
+        summaryText = `Needs further structured practice on core concepts and applied scenarios in ${meta.name}.`;
+      } else {
+        summaryText = `Section planned for interview practice.`;
+      }
+    }
+
+    if (strengths.length === 0 && avgScore >= 6.0) {
+      strengths.push(`Addressed core requirements in ${meta.name} systematically`);
+      strengths.push("Demonstrated clear, professional communication");
+    }
+
+    if (weaknesses.length === 0 && avgScore < 8.5) {
+      weaknesses.push(`Elaborate on production edge cases and scaling considerations for ${meta.name}`);
+    }
+
+    if (suggestions.length === 0) {
+      if (avgScore < 6.0) {
+        suggestions.push(`Review fundamental architecture and language mechanics for ${meta.name}`);
+        suggestions.push(`Practice timed mock technical questions in ${meta.name}`);
+      } else if (avgScore < 8.0) {
+        suggestions.push(`Deepen trade-off analysis between alternative design patterns in ${meta.name}`);
+        suggestions.push(`Cite concrete production benchmarks and metrics when answering`);
+      } else {
+        suggestions.push(`Maintain strong performance; prepare for advanced architectural and incident response scenarios in ${meta.name}`);
+      }
+    }
+
+    sectionBreakdown[secId] = {
+      sectionId: secId,
+      sectionName: meta.name.charAt(0).toUpperCase() + meta.name.slice(1),
+      score: avgScore,
+      ratingLabel: ratingLabel(avgScore),
+      questionCount: turns.length,
+      answeredCount: turns.filter((t) => t.score > 0).length,
+      categoryScores: {
+        correctness: averageScore(turns, "correctness") || avgScore,
+        clarity: averageScore(turns, "clarity") || avgScore,
+        depth: averageScore(turns, "depth") || avgScore,
+        relevance: averageScore(turns, "relevance") || avgScore,
+        completeness: averageScore(turns, "completeness") || avgScore
+      },
+      summary: summaryText,
+      strengths: strengths.slice(0, 4),
+      weaknesses: weaknesses.slice(0, 4),
+      improvementSuggestions: suggestions.slice(0, 4)
+    };
+  });
+
+  return sectionBreakdown;
+}
+
 /**
  * HELPER: Finalize and persist full session evaluation at interview conclusion
  */
@@ -679,6 +814,10 @@ async function finalizeSessionEvaluation(session, res) {
       session.evaluations = fallbackEvals;
     }
 
+    const sectionWiseEvaluations = buildSectionWiseEvaluations(session, session.evaluations || [], batchResult);
+    finalReport.sectionWiseEvaluations = sectionWiseEvaluations;
+    session.sectionWiseEvaluations = sectionWiseEvaluations;
+
     session.status = "completed";
     session.reportStatus = "completed";
     session.finalReport = finalReport;
@@ -693,6 +832,9 @@ async function finalizeSessionEvaluation(session, res) {
       reportStatus: "completed",
       finalReport,
       report: finalReport,
+      sectionWiseEvaluations,
+      practiceMode: session.practiceMode || "complete",
+      selectedSections: session.selectedSections || [],
       ...finalReport
     });
   } catch (err) {

@@ -2901,11 +2901,20 @@ You MUST output ONLY valid JSON matching this exact structure:
     "sample_improved_answer": "Hi, I am a software engineer with 2+ years of experience specializing in building responsive web applications using React and Node.js..."
   }},
   "section_summaries": {{
-    "introduction": "Engaging, role-aligned overview.",
-    "projects": "Demonstrated strong architecture ownership and debugging process.",
-    "technical_concepts": "Solid grasp of async mechanics and state management.",
-    "problem_solving": "Clear trade-off analysis under latency constraints.",
-    "behavioral": "Structured STAR responses demonstrating collaborative problem-solving."
+    "introduction": {{
+      "score": 8.5,
+      "summary": "Engaging, role-aligned overview.",
+      "strengths": ["Clear role hook", "Concrete project mentions"],
+      "weaknesses": ["Highlight quantifiable metrics earlier"],
+      "improvement_suggestions": ["Prepare a 90-second elevator pitch with quantifiable impact"]
+    }},
+    "technical_concepts": {{
+      "score": 8.0,
+      "summary": "Solid grasp of async mechanics and state management.",
+      "strengths": ["Good understanding of event loop and closures"],
+      "weaknesses": ["Could provide deeper memory profiling details"],
+      "improvement_suggestions": ["Review memory leak diagnostics and heap dump inspection"]
+    }}
   }},
   "feedback": "Candidate demonstrated solid competence in core {role} fundamentals with clear communication.",
   "strengths": ["Strong foundational knowledge", "Structured answers", "Good debugging rationale"],
