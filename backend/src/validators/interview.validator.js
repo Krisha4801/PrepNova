@@ -3,6 +3,59 @@
  */
 
 const VALID_COUNT_MODES = ["3", "6", "10", "dynamic"];
+const VALID_PRACTICE_MODES = ["complete", "selected_sections"];
+
+/**
+ * Normalizes and validates the interview practice mode ('complete' vs 'selected_sections').
+ * Defaults to 'complete'.
+ */
+function normalizePracticeMode(modeInput) {
+  if (!modeInput) return "complete";
+  const str = String(modeInput).toLowerCase().trim();
+  if (VALID_PRACTICE_MODES.includes(str)) return str;
+  return "complete";
+}
+
+/**
+ * Validates candidate selected sections array for section-based interview practice.
+ */
+function validateSelectedSections(sections) {
+  if (!Array.isArray(sections)) {
+    return { valid: false, error: "Selected sections must be an array." };
+  }
+  const normalized = [];
+  for (let i = 0; i < sections.length; i++) {
+    const item = sections[i];
+    if (typeof item === "string") {
+      const clean = item.trim();
+      if (!clean) return { valid: false, error: `Section at index ${i} is empty.` };
+      normalized.push({
+        id: clean.toLowerCase().replace(/[^a-z0-9]+/g, "_"),
+        name: clean,
+        category: "custom",
+        isCustom: false
+      });
+    } else if (item && typeof item === "object") {
+      const id = String(item.id || item.sectionId || "").trim();
+      const name = String(item.name || item.title || id).trim();
+      if (!id || !name) {
+        return { valid: false, error: `Section at index ${i} must specify both id and name.` };
+      }
+      normalized.push({
+        id,
+        name,
+        category: item.category || "custom",
+        badge: item.badge || "Section Practice",
+        isCustom: Boolean(item.isCustom),
+        defaultObjective: item.defaultObjective || `Assess knowledge in ${name}`,
+        competencies: Array.isArray(item.competencies) ? item.competencies : [name]
+      });
+    } else {
+      return { valid: false, error: `Invalid section format at index ${i}.` };
+    }
+  }
+  return { valid: true, sections: normalized };
+}
 
 /**
  * Normalizes and validates the question count mode.
@@ -112,7 +165,7 @@ function validateSectionBatch(batch) {
     // Semantic duplicate text check
     for (const prev of seenTexts) {
       if (isSemanticDuplicate(questionText, prev, 0.75)) {
-        return { valid: false, error: `Duplicate or semantically identical question text detected at index ${i}.` };
+        return { valid: false, error: `Duplicate question text: Duplicate or semantically identical question text detected at index ${i}.` };
       }
     }
     seenTexts.push(questionText);
@@ -152,6 +205,9 @@ function validateFollowUp(followUp) {
 
 module.exports = {
   VALID_COUNT_MODES,
+  VALID_PRACTICE_MODES,
+  normalizePracticeMode,
+  validateSelectedSections,
   normalizeQuestionCountMode,
   validateSectionBatch,
   validateFollowUp,

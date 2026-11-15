@@ -284,6 +284,8 @@ class AiServiceClient {
         jd_id: params.jdId || null,
         jd_title: params.jdTitle || null,
         target_duration_minutes: params.targetDurationMinutes || 30,
+        practice_mode: params.practiceMode || params.practice_mode || "complete",
+        selected_sections: params.selectedSections || params.selected_sections || [],
         max_questions: params.maxQuestions || null,
         question_count_mode: params.questionCountMode || params.question_count_mode || "6",
         focus_areas: params.focusAreas || []
@@ -319,6 +321,9 @@ class AiServiceClient {
       if (data && typeof data === "object") {
         return {
           sectionId: data.sectionId || data.section_id || params.sectionId,
+          section_id: data.sectionId || data.section_id || params.sectionId,
+          generation_mode: String(data.generationMode || data.generation_mode || params.generationMode || "6"),
+          planned_primary_question_count: Number(data.plannedPrimaryQuestionCount || data.planned_primary_question_count || params.plannedPrimaryQuestionCount || 6),
           generationMode: String(data.generationMode || data.generation_mode || params.generationMode || "6"),
           plannedPrimaryQuestionCount: Number(data.plannedPrimaryQuestionCount || data.planned_primary_question_count || params.plannedPrimaryQuestionCount || 6),
           generationVersion: Number(data.generationVersion || data.generation_version || 1),
@@ -367,6 +372,16 @@ class AiServiceClient {
         const rawFu = data.followUp || data.follow_up;
         return {
           action: data.action,
+          follow_up: rawFu ? {
+            type: rawFu.type || "follow_up",
+            parentQuestionId: rawFu.parentQuestionId || rawFu.parent_question_id,
+            parent_question_id: rawFu.parentQuestionId || rawFu.parent_question_id,
+            sectionId: rawFu.sectionId || rawFu.section_id,
+            section_id: rawFu.sectionId || rawFu.section_id,
+            objective: rawFu.objective || "",
+            text: rawFu.text || "",
+            contextReferences: rawFu.contextReferences || rawFu.context_references || []
+          } : null,
           followUp: rawFu ? {
             type: rawFu.type || "follow_up",
             parentQuestionId: rawFu.parentQuestionId || rawFu.parent_question_id,
