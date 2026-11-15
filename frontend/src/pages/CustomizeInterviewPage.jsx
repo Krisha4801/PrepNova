@@ -28,6 +28,11 @@ export default function CustomizeInterviewPage() {
   const resumeId = location.state?.resumeId || localStorage.getItem('prepnova_resume_id') || '';
   const jdId = location.state?.jdId || localStorage.getItem('prepnova_jd_id') || '';
 
+  // Practice Mode: Complete Interview vs Selected Sections
+  const [practiceMode, setPracticeMode] = useState(() => {
+    return location.state?.practiceMode || localStorage.getItem('prepnova_practice_mode') || 'complete';
+  });
+
   // Section 1: Types
   const [types, setTypes] = useState({
     technical: true,
@@ -116,6 +121,7 @@ export default function CustomizeInterviewPage() {
   };
 
   const handleContinue = () => {
+    localStorage.setItem('prepnova_practice_mode', practiceMode);
     localStorage.setItem('prepnova_difficulty', difficulty);
     localStorage.setItem('prepnova_question_count', String(questionCount));
     localStorage.setItem('prepnova_mode', interviewMode);
@@ -136,6 +142,7 @@ export default function CustomizeInterviewPage() {
         types,
         resumeId,
         jdId,
+        practiceMode,
         mode
       }
     });
@@ -185,6 +192,79 @@ export default function CustomizeInterviewPage() {
             <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
               Adjust difficulty tiers, question volume, and focus technical competencies.
             </p>
+          </div>
+
+          {/* Practice Mode Selection */}
+          <div className="space-y-2.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                Interview Practice Mode
+              </label>
+              <span className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400">
+                {practiceMode === 'complete' ? 'Comprehensive Assessment' : 'Section Practice'}
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setPracticeMode('complete')}
+                className={`p-4 rounded-xl border text-left transition-all cursor-pointer ${
+                  practiceMode === 'complete'
+                    ? 'border-indigo-600 bg-indigo-50/50 dark:bg-indigo-950/40 ring-2 ring-indigo-500/20 shadow-xs'
+                    : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                      practiceMode === 'complete'
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                    }`}>
+                      <Layers className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <span className="text-sm font-bold text-slate-900 dark:text-white block">Complete Interview</span>
+                      <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-semibold">All-Round Assessment</span>
+                    </div>
+                  </div>
+                  {practiceMode === 'complete' && <Check className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />}
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-2.5 leading-snug">
+                  Comprehensive mock interview spanning self-introduction, project deep dive, core technical skills, system design scenarios, and behavioral competencies.
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setPracticeMode('selected_sections')}
+                className={`p-4 rounded-xl border text-left transition-all cursor-pointer ${
+                  practiceMode === 'selected_sections'
+                    ? 'border-indigo-600 bg-indigo-50/50 dark:bg-indigo-950/40 ring-2 ring-indigo-500/20 shadow-xs'
+                    : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                      practiceMode === 'selected_sections'
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                    }`}>
+                      <Sparkles className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <span className="text-sm font-bold text-slate-900 dark:text-white block">Selected Sections</span>
+                      <span className="text-[10px] text-purple-600 dark:text-purple-400 font-semibold">Targeted Topic Focus</span>
+                    </div>
+                  </div>
+                  {practiceMode === 'selected_sections' && <Check className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />}
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-2.5 leading-snug">
+                  Target specific technical competencies or custom topics. Questions are generated exclusively from your chosen sections with section-wise analytics.
+                </p>
+              </button>
+            </div>
           </div>
 
           {/* Difficulty Tier Selection */}
