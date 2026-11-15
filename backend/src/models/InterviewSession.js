@@ -121,6 +121,7 @@ const FinalReportSchema = new mongoose.Schema(
       sampleImprovedAnswer: { type: String, default: null }
     },
     sectionSummaries: { type: mongoose.Schema.Types.Mixed, default: {} },
+    sectionWiseEvaluations: { type: mongoose.Schema.Types.Mixed, default: {} },
     strengths: { type: [String], default: [] },
     areasOfImprovement: { type: [String], default: [] },
     preparationPlan: { type: [String], default: [] },
@@ -191,6 +192,20 @@ const InterviewSessionSchema = new mongoose.Schema(
       type: String,
       enum: ["3", "6", "10", "dynamic"],
       default: "6"
+    },
+    practiceMode: {
+      type: String,
+      enum: ["complete", "selected_sections"],
+      default: "complete",
+      index: true
+    },
+    selectedSections: {
+      type: [mongoose.Schema.Types.Mixed],
+      default: []
+    },
+    sectionWiseEvaluations: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {}
     },
     currentSectionId: {
       type: String,

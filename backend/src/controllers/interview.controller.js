@@ -162,7 +162,9 @@ function buildSkippedEvaluation(questionRecord, questionIndex = 0) {
  */
 exports.startInterview = async (req, res, next) => {
   try {
-    const { name, role, level, resumeId, jdId, focusAreas } = req.body;
+    const { name, role, level, resumeId, jdId, focusAreas, practiceMode: rawPracticeMode, selectedSections: rawSelectedSections } = req.body;
+    const practiceMode = rawPracticeMode === "selected_sections" ? "selected_sections" : "complete";
+    const selectedSections = Array.isArray(rawSelectedSections) ? rawSelectedSections : [];
     const userId = req.user ? String(req.user._id || req.user.id) : null;
 
     if (!userId) {
@@ -284,6 +286,8 @@ exports.startInterview = async (req, res, next) => {
         targetDurationMinutes: durationMinutes,
         questionCountMode,
         maxQuestions: requestedMaxQuestions,
+        practiceMode,
+        selectedSections,
         focusAreas: Array.isArray(focusAreas) ? focusAreas : []
       });
     } catch (blueprintErr) {
@@ -296,21 +300,43 @@ exports.startInterview = async (req, res, next) => {
     // Fallback blueprint if AI service unavailable or returns incomplete structure
     const perSectionTarget = questionCountMode === "3" ? 3 : questionCountMode === "10" ? 10 : questionCountMode === "dynamic" ? 4 : 6;
     if (!blueprint || !Array.isArray(blueprint.sections) || blueprint.sections.length === 0) {
-      blueprint = {
-        version: 1,
-        role: selectedRole,
-        difficulty: selectedLevel,
-        target_duration_minutes: durationMinutes,
-        question_count_mode: questionCountMode,
-        sections: [
-          { id: "introduction", type: "introduction", title: "Candidate Introduction & Alignment", planned_primary_question_count: 1, applicable: true },
-          { id: "projects", type: "projects", title: "Key Projects & Personal Ownership", planned_primary_question_count: perSectionTarget, applicable: true },
-          { id: "skills", type: "skills", title: "Core Skills & Practical Application", planned_primary_question_count: perSectionTarget, applicable: true },
-          { id: "technical_concepts", type: "technical_concepts", title: "Technical Fundamentals & Language Mechanics", planned_primary_question_count: perSectionTarget, applicable: true },
-          { id: "scenario", type: "scenario", title: "Scenario & Applied Problem Solving", planned_primary_question_count: perSectionTarget, applicable: true },
-          { id: "behavioral", type: "behavioral", title: "Behavioral & Professional Communication", planned_primary_question_count: perSectionTarget, applicable: true }
-        ]
-      };
+      if (practiceMode === "selected_sections" && selectedSections.length > 0) {
+        const targetTotal = requestedMaxQuestions || (questionCountMode in { "3": 1, "6": 1, "10": 1 } ? Number(questionCountMode) : 6);
+        const nSecs = selectedSections.length;
+        const baseCnt = Math.max(1, Math.floor(targetTotal / nSecs));
+        const rem = targetTotal % nSecs;
+        blueprint = {
+          version: 1,
+          role: selectedRole,
+          difficulty: selectedLevel,
+          target_duration_minutes: durationMinutes,
+          question_count_mode: questionCountMode,
+          sections: selectedSections.map((sec, idx) => ({
+            id: sec.id || `section_${idx + 1}`,
+            type: sec.id || `section_${idx + 1}`,
+            title: sec.name || sec.title || (sec.id || "").replace(/_/g, " "),
+            objective: sec.description || sec.objective || `Assess proficiency in ${sec.name || sec.id}`,
+            planned_primary_question_count: baseCnt + (idx < rem ? 1 : 0),
+            applicable: true
+          }))
+        };
+      } else {
+        blueprint = {
+          version: 1,
+          role: selectedRole,
+          difficulty: selectedLevel,
+          target_duration_minutes: durationMinutes,
+          question_count_mode: questionCountMode,
+          sections: [
+            { id: "introduction", type: "introduction", title: "Candidate Introduction & Alignment", planned_primary_question_count: 1, applicable: true },
+            { id: "projects", type: "projects", title: "Key Projects & Personal Ownership", planned_primary_question_count: perSectionTarget, applicable: true },
+            { id: "skills", type: "skills", title: "Core Skills & Practical Application", planned_primary_question_count: perSectionTarget, applicable: true },
+            { id: "technical_concepts", type: "technical_concepts", title: "Technical Fundamentals & Language Mechanics", planned_primary_question_count: perSectionTarget, applicable: true },
+            { id: "scenario", type: "scenario", title: "Scenario & Applied Problem Solving", planned_primary_question_count: perSectionTarget, applicable: true },
+            { id: "behavioral", type: "behavioral", title: "Behavioral & Professional Communication", planned_primary_question_count: perSectionTarget, applicable: true }
+          ]
+        };
+      }
     }
 
     // Calculate planned primary question counts per section
@@ -325,46 +351,100 @@ exports.startInterview = async (req, res, next) => {
     });
     const totalQuestions = totalPlannedQuestions > 0 ? totalPlannedQuestions : MAX_QUESTIONS;
 
-    // Turn 0 is always the opening candidate self-introduction in the introduction section
-    const introQuestionText = `Hello! To get started, could you please introduce yourself and highlight the key experiences, skills, and projects most relevant to this ${selectedRole} position?`;
+    // Determine initial section
+    const firstApplicableSec = blueprint.sections.find((s) => s.applicable !== false) || blueprint.sections[0];
+    const initialSectionId = firstApplicableSec ? firstApplicableSec.id : "introduction";
 
-    const introQuestionId = `q_${sessionId}_introduction_1`;
-    const introBatch = {
-      sectionId: "introduction",
-      generationMode: questionCountMode,
-      plannedPrimaryQuestionCount: 1,
-      generationVersion: 1,
-      questions: [
-        {
-          questionId: introQuestionId,
-          sectionId: "introduction",
-          order: 1,
-          type: "primary",
-          objective: "Assess communication structure, conciseness, and alignment with target role",
+    let initialBatch = null;
+    let firstQuestionItem = null;
+
+    if (initialSectionId === "introduction") {
+      const introQuestionText = `Hello! To get started, could you please introduce yourself and highlight the key experiences, skills, and projects most relevant to this ${selectedRole} position?`;
+      const introQuestionId = `q_${sessionId}_introduction_1`;
+      initialBatch = {
+        sectionId: "introduction",
+        generationMode: questionCountMode,
+        plannedPrimaryQuestionCount: 1,
+        generationVersion: 1,
+        questions: [
+          {
+            questionId: introQuestionId,
+            sectionId: "introduction",
+            order: 1,
+            type: "primary",
+            objective: "Assess communication structure, conciseness, and alignment with target role",
+            difficulty: selectedLevel,
+            text: introQuestionText,
+            contextReferences: ["role"],
+            status: "asked"
+          }
+        ]
+      };
+      firstQuestionItem = {
+        questionId: introQuestionId,
+        question: introQuestionText,
+        category: "Introduction",
+        format: "Open",
+        difficulty: selectedLevel,
+        groundingContext: null,
+        expectedConcepts: [selectedRole],
+        expectedAnswer: null,
+        source: "conversational_engine",
+        sectionId: "introduction",
+        questionType: "primary",
+        estimatedSeconds: 90
+      };
+    } else {
+      // Direct practice starting in candidate-selected section
+      const secPlannedCount = Number(plannedSectionCounts[initialSectionId] || firstApplicableSec.planned_primary_question_count || 2);
+      try {
+        initialBatch = await aiServiceClient.generateSectionBatch({
+          sessionId,
+          sectionId: initialSectionId,
+          generationMode: questionCountMode,
+          plannedPrimaryQuestionCount: secPlannedCount,
+          role: selectedRole,
           difficulty: selectedLevel,
-          text: introQuestionText,
-          contextReferences: ["role"],
-          status: "asked"
-        }
-      ]
-    };
+          mode,
+          resumeId: effectiveResumeId,
+          jdId: effectiveJdId,
+          userId: String(userId),
+          sectionObjective: firstApplicableSec.objective,
+          competencies: firstApplicableSec.competencies || [],
+          alreadyAskedQuestions: [],
+          practiceMode,
+          isCustom: Boolean(firstApplicableSec.isCustom || selectedSections.find(s => s.id === initialSectionId)?.isCustom),
+          scenarioFocus: initialSectionId === "scenario_based" || initialSectionId === "scenario"
+        });
+      } catch (genErr) {
+        console.warn(`Initial section batch fallback for ${initialSectionId}:`, genErr.message);
+        initialBatch = generateSectionBatchFallback({ sessionId, role: selectedRole, difficulty: selectedLevel, questions: [] }, initialSectionId, secPlannedCount);
+      }
 
-    const firstQuestionItem = {
-      questionId: introQuestionId,
-      question: introQuestionText,
-      category: "Introduction",
-      format: "Open",
-      difficulty: selectedLevel,
-      groundingContext: null,
-      expectedConcepts: [selectedRole],
-      expectedAnswer: null,
-      source: "conversational_engine",
-      sectionId: "introduction",
-      questionType: "primary",
-      estimatedSeconds: 90
-    };
+      if (!initialBatch || !Array.isArray(initialBatch.questions) || initialBatch.questions.length === 0) {
+        initialBatch = generateSectionBatchFallback({ sessionId, role: selectedRole, difficulty: selectedLevel, questions: [] }, initialSectionId, secPlannedCount);
+      }
 
-    // Create durable session in MongoDB with per-section count mode and planned section counts
+      // Mark the very first question as asked
+      initialBatch.questions[0].status = "asked";
+      const qFirst = initialBatch.questions[0];
+      firstQuestionItem = {
+        questionId: qFirst.questionId || `q_${sessionId}_${initialSectionId}_1`,
+        question: qFirst.text,
+        category: firstApplicableSec.title || initialSectionId,
+        format: "Scenario",
+        difficulty: qFirst.difficulty || selectedLevel,
+        groundingContext: null,
+        expectedConcepts: [selectedRole],
+        expectedAnswer: null,
+        source: "section_batch",
+        sectionId: initialSectionId,
+        questionType: "primary",
+        estimatedSeconds: 60
+      };
+    }
+
+    // Create durable session in MongoDB with practice mode and section metadata
     const sessionDoc = await InterviewSession.create({
       userId,
       sessionId,
@@ -377,10 +457,13 @@ exports.startInterview = async (req, res, next) => {
       reportStatus: "not_started",
       blueprint,
       questionCountMode,
-      currentSectionId: "introduction",
+      practiceMode,
+      selectedSections,
+      sectionWiseEvaluations: {},
+      currentSectionId: initialSectionId,
       currentBatchQuestionIndex: 0,
       plannedSectionCounts,
-      sectionBatches: [introBatch],
+      sectionBatches: [initialBatch],
       totalQuestions,
       questionCount: 1,
       questions: [firstQuestionItem],
@@ -402,6 +485,8 @@ exports.startInterview = async (req, res, next) => {
       matchedRole: selectedRole,
       mode,
       questionCountMode,
+      practiceMode,
+      selectedSections,
       plannedSectionCounts,
       availableRoles: getAvailableRoles(),
       availableLevels: LEVELS,
@@ -708,7 +793,10 @@ async function getOrGenerateSectionBatch(session, sectionId) {
       userId: String(session.userId),
       sectionObjective: secMeta?.objective,
       competencies: secMeta?.competencies || [],
-      alreadyAskedQuestions: alreadyAsked
+      alreadyAskedQuestions: alreadyAsked,
+      practiceMode: session.practiceMode || "complete",
+      isCustom: Boolean(secMeta?.isCustom || session.selectedSections?.find(s => s.id === sectionId)?.isCustom),
+      scenarioFocus: Boolean(sectionId === "scenario_based" || sectionId === "scenario" || secMeta?.type === "scenario_based")
     });
   } catch (err) {
     console.warn(`aiServiceClient.generateSectionBatch fallback for section ${sectionId}:`, err.message);
@@ -1136,6 +1224,9 @@ exports.getInterviewHistory = async (req, res, next) => {
     if (req.query.status) {
       query.status = req.query.status;
     }
+    if (req.query.practiceMode) {
+      query.practiceMode = req.query.practiceMode;
+    }
 
     const [total, sessions] = await Promise.all([
       InterviewSession.countDocuments(query),
@@ -1173,6 +1264,8 @@ exports.getInterviewHistory = async (req, res, next) => {
         difficultyLevel: s.difficulty,
         mode: s.mode,
         interviewMode: s.mode,
+        practiceMode: s.practiceMode || "complete",
+        selectedSections: s.selectedSections || [],
         status: s.status,
         date: s.createdAt,
         createdAt: s.createdAt,
@@ -1253,6 +1346,9 @@ exports.getInterviewReport = async (req, res, next) => {
       coverageSummary: session.finalReport?.coverageSummary || {},
       feedback: session.finalReport?.feedback || "",
       finalReport: session.finalReport,
+      practiceMode: session.practiceMode || "complete",
+      selectedSections: session.selectedSections || [],
+      sectionWiseEvaluations: session.finalReport?.sectionWiseEvaluations || session.sectionWiseEvaluations || session.finalReport?.sectionSummaries || {},
       questionsAnswered: session.answers.length,
       totalQuestions: session.totalQuestions,
       transcript
@@ -1589,6 +1685,8 @@ exports.getActiveSession = async (req, res, next) => {
       level: activeQuestion.difficulty || session.difficulty,
       role: session.role,
       questionCountMode: session.questionCountMode,
+      practiceMode: session.practiceMode || "complete",
+      selectedSections: session.selectedSections || [],
       plannedSectionCounts: session.plannedSectionCounts,
       progress: {
         current: session.answers.length + 1,
