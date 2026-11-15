@@ -18,6 +18,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import WorkspaceLayout from '../components/layout/WorkspaceLayout';
 import SectionSelector from '../components/interview/setup/SectionSelector';
 import { INTERVIEW_SECTIONS_LIBRARY } from '../constants/sections';
+import { getRecommendedSections } from '../lib/sectionRecommender';
 
 export default function CustomizeInterviewPage() {
   const navigate = useNavigate();
@@ -159,6 +160,36 @@ export default function CustomizeInterviewPage() {
 
   const handleClearAll = () => {
     setSelectedSections([]);
+  };
+
+  // Intelligent Section Recommendations based on Role, Resume, and JD
+  const recommendations = useMemo(() => {
+    let resumeDoc = null;
+    let jdDoc = null;
+    try {
+      const rRaw = location.state?.resumeDoc || localStorage.getItem('prepnova_resume_doc');
+      if (rRaw) resumeDoc = typeof rRaw === 'string' ? JSON.parse(rRaw) : rRaw;
+    } catch (_) {}
+    try {
+      const jRaw = location.state?.jdDoc || localStorage.getItem('prepnova_jd_doc');
+      if (jRaw) jdDoc = typeof jRaw === 'string' ? JSON.parse(jRaw) : jRaw;
+    } catch (_) {}
+
+    return getRecommendedSections({
+      role: targetRole,
+      resumeDoc,
+      jdDoc
+    });
+  }, [targetRole, location.state]);
+
+  const handleApplyRecommended = () => {
+    if (!recommendations?.recommendedSections?.length) return;
+    const currentCustom = selectedSections.filter((s) => s.isCustom);
+    const combined = [...recommendations.recommendedSections, ...currentCustom];
+    const uniqueMap = new Map();
+    combined.forEach((s) => uniqueMap.set(s.id, s));
+    setSelectedSections(Array.from(uniqueMap.values()));
+    if (sectionError) setSectionError('');
   };
 
   const handleContinue = () => {
@@ -325,6 +356,8 @@ export default function CustomizeInterviewPage() {
                 onAddCustomSection={handleAddCustomSection}
                 onSelectAll={handleSelectAll}
                 onClearAll={handleClearAll}
+                recommendations={recommendations}
+                onApplyRecommended={handleApplyRecommended}
               />
               {sectionError && (
                 <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-xs text-rose-700 dark:text-rose-300 font-medium">

@@ -58,7 +58,7 @@ export default function SectionSelector({
   onAddCustomSection,
   onSelectAll,
   onClearAll,
-  recommendedSectionIds = [],
+  recommendations = null,
   onApplyRecommended
 }) {
   const [searchQuery, setSearchQuery] = useState('');
@@ -149,6 +149,59 @@ export default function SectionSelector({
           </button>
         </div>
       </div>
+
+      {/* Role & Resume/JD Recommendations Banner */}
+      {recommendations && recommendations.recommendedSections?.length > 0 && (
+        <div className="p-4 rounded-xl bg-gradient-to-r from-amber-500/10 via-indigo-500/10 to-purple-500/10 border border-amber-300/40 dark:border-amber-700/40 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-6 rounded-md bg-amber-500 text-white flex items-center justify-center shrink-0">
+                <Sparkles className="w-3.5 h-3.5" />
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-slate-900 dark:text-white">
+                  Recommendations for {recommendations.basisLabel}
+                </h4>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Curated competency sections matching your profile. Recommendations do not limit your choices.
+                </p>
+              </div>
+            </div>
+
+            {onApplyRecommended && (
+              <button
+                type="button"
+                onClick={onApplyRecommended}
+                className="btn-primary text-xs h-7 px-3 bg-amber-600 hover:bg-amber-700 border-amber-600 shrink-0 self-start sm:self-auto cursor-pointer"
+              >
+                <Sparkles className="w-3 h-3 mr-1" />
+                <span>Apply Recommendations</span>
+              </button>
+            )}
+          </div>
+
+          <div className="flex flex-wrap gap-1.5 pt-1">
+            {recommendations.recommendedSections.map((rec) => {
+              const isSelected = selectedIds.has(rec.id);
+              return (
+                <button
+                  key={rec.id}
+                  type="button"
+                  onClick={() => onToggleSection(rec)}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all cursor-pointer ${
+                    isSelected
+                      ? 'border-indigo-600 bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300'
+                      : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:border-amber-400'
+                  }`}
+                >
+                  {isSelected ? <Check className="w-3 h-3 text-indigo-600" /> : <Plus className="w-3 h-3 text-slate-400" />}
+                  <span>{rec.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Selected Sections Active Chips Tray */}
       {selectedSections.length > 0 && (
@@ -269,7 +322,7 @@ export default function SectionSelector({
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[460px] overflow-y-auto pr-1">
         {filteredSections.map((sec) => {
           const isSelected = selectedIds.has(sec.id);
-          const isRecommended = recommendedSectionIds.includes(sec.id);
+          const isRecommended = Boolean(recommendations?.recommendedIds?.includes(sec.id));
           const Icon = ICON_MAP[sec.icon] || Layers;
 
           return (
