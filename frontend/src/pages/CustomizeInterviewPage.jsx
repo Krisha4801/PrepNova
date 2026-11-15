@@ -16,6 +16,8 @@ import {
 } from 'lucide-react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import WorkspaceLayout from '../components/layout/WorkspaceLayout';
+import SectionSelector from '../components/interview/setup/SectionSelector';
+import { INTERVIEW_SECTIONS_LIBRARY } from '../constants/sections';
 
 export default function CustomizeInterviewPage() {
   const navigate = useNavigate();
@@ -32,6 +34,16 @@ export default function CustomizeInterviewPage() {
   const [practiceMode, setPracticeMode] = useState(() => {
     return location.state?.practiceMode || localStorage.getItem('prepnova_practice_mode') || 'complete';
   });
+
+  // Section Selection State (for Selected Sections practice mode)
+  const [selectedSections, setSelectedSections] = useState(() => {
+    try {
+      const saved = location.state?.selectedSections || localStorage.getItem('prepnova_selected_sections');
+      if (saved) return typeof saved === 'string' ? JSON.parse(saved) : saved;
+    } catch (e) { /* ignore */ }
+    return [];
+  });
+  const [sectionError, setSectionError] = useState('');
 
   // Section 1: Types
   const [types, setTypes] = useState({
@@ -120,8 +132,43 @@ export default function CustomizeInterviewPage() {
     }
   };
 
+  const handleToggleSection = (section) => {
+    const secId = typeof section === 'string' ? section : section.id;
+    const exists = selectedSections.some((s) => (typeof s === 'string' ? s : s.id) === secId);
+    if (exists) {
+      setSelectedSections(selectedSections.filter((s) => (typeof s === 'string' ? s : s.id) !== secId));
+    } else {
+      setSelectedSections([...selectedSections, section]);
+    }
+    if (sectionError) setSectionError('');
+  };
+
+  const handleRemoveSection = (sectionId) => {
+    setSelectedSections(selectedSections.filter((s) => (typeof s === 'string' ? s : s.id) !== sectionId));
+  };
+
+  const handleAddCustomSection = (customSection) => {
+    setSelectedSections([...selectedSections, customSection]);
+    if (sectionError) setSectionError('');
+  };
+
+  const handleSelectAll = () => {
+    setSelectedSections([...INTERVIEW_SECTIONS_LIBRARY]);
+    if (sectionError) setSectionError('');
+  };
+
+  const handleClearAll = () => {
+    setSelectedSections([]);
+  };
+
   const handleContinue = () => {
+    if (practiceMode === 'selected_sections' && (!selectedSections || selectedSections.length === 0)) {
+      setSectionError('Please select at least one topic section or add a custom topic to begin.');
+      return;
+    }
+
     localStorage.setItem('prepnova_practice_mode', practiceMode);
+    localStorage.setItem('prepnova_selected_sections', JSON.stringify(selectedSections));
     localStorage.setItem('prepnova_difficulty', difficulty);
     localStorage.setItem('prepnova_question_count', String(questionCount));
     localStorage.setItem('prepnova_mode', interviewMode);
@@ -143,6 +190,7 @@ export default function CustomizeInterviewPage() {
         resumeId,
         jdId,
         practiceMode,
+        selectedSections,
         mode
       }
     });
@@ -266,6 +314,25 @@ export default function CustomizeInterviewPage() {
               </button>
             </div>
           </div>
+
+          {/* Section Selection Library (when Selected Sections mode is active) */}
+          {practiceMode === 'selected_sections' && (
+            <div className="space-y-2">
+              <SectionSelector
+                selectedSections={selectedSections}
+                onToggleSection={handleToggleSection}
+                onRemoveSection={handleRemoveSection}
+                onAddCustomSection={handleAddCustomSection}
+                onSelectAll={handleSelectAll}
+                onClearAll={handleClearAll}
+              />
+              {sectionError && (
+                <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-xs text-rose-700 dark:text-rose-300 font-medium">
+                  {sectionError}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Difficulty Tier Selection */}
           <div className="space-y-2.5">
