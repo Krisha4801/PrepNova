@@ -300,37 +300,31 @@ AI Microservice runs at: **`http://127.0.0.1:8000`**
 
 ## Automated Testing Suite
 
-To run all backend unit and contract tests:
-```bash
+Run the backend unit tests, frontend production build, and AI service tests from the repository root:
+
+```powershell
 cd backend
-npm test
+node --test --test-concurrency=1 tests/unit/*.test.js
+cd ..\frontend
+npm run build
+cd ..\AIService
+python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
-### Test Coverage Results:
-- Registration Validation & Creation: **5 PASS**
-- Login Authentication & Security: **4 PASS**
-- JWT Generation, Signature, Expiry & Revocation: **8 PASS**
-- Protected Routes & User Isolation: **3 PASS**
-- Authorization & Role Guards: **3 PASS**
-- Auth Input Validators: **8 PASS**
-- Logout Verification & Token Revocation: **2 PASS**
-- User Deletion Immediate 401 & Account Deactivation: **2 PASS**
-- OAuth State, PKCE & Nonce Management: **7 PASS**
-- Google OAuth & OIDC Provider RS256 Verification: **5 PASS**
-- OAuth Identity Mapper & Normalizer: **4 PASS**
-- OAuth & OIDC Integration: **13 PASS**
-- Password Reset & OTP Lifecycle: **16 PASS**
-- Email Service & Template Rendering: **4 PASS**
-- Section-Wise Batch Generation & Persistence: **4 PASS**
-- Interview Generation Contracts & Section Validators: **13 PASS**
-- **Total: 101 tests, 26 suites, 0 failures, 100% passing.**
+### Test Coverage Results
+
+- Backend unit tests: **106 tests across 28 suites; 0 failures**.
+- AI service tests: **30 tests passed**.
+- Frontend: production build succeeds; a browser UI test runner is not configured.
+- Topic-only interview coverage verifies selected standard/custom topic validation and blueprint scoping; the API persistence integration test requires MongoDB.
+- Full backend integration tests run with `npm test` from `backend` and require MongoDB at `mongodb://127.0.0.1:27017/prepnova_test`.
 
 ---
 
 ## Implementation Log
 
 ### 2026-11-15 — Phase 5: Section-Based Interview Practice & Granular Scorecard Breakdown
-- **Status**: Completed & Verified (**101 passing tests across 26 suites**, Vite build pass 0 errors)
+- **Status**: Completed & Verified (**106 backend unit tests across 28 suites; 30 AI service tests**, Vite build pass 0 errors)
 - **Changes**:
   - Implemented dual interview mode toggle (`complete` vs `selected_sections`) in `CustomizeInterviewPage.jsx`.
   - Built comprehensive 17-category searchable section library (`sections.js`) covering DSA, System Design, Scenario-Based Outages, React, Node.js, Cloud/DevOps, AI/ML/RAG, Databases, OS, Networks, Cybersecurity, and more.
@@ -344,6 +338,7 @@ npm test
   - Implemented `buildSectionWiseEvaluations` in `interview.controller.js` to compute section scores, category rubrics, strengths, weaknesses, and improvement suggestions.
   - Enhanced `ResultsPage.jsx` and `InterviewResults.jsx` with a dedicated **Section-by-Section Performance Breakdown** panel.
   - Updated `History.jsx` and `HistoryTable.jsx` with practice mode badges, topic chips, and dropdown filtering.
+  - Added automated coverage for interviews scoped to selected or custom topics, and regression coverage for punctuated non-answers.
 
 ### 2026-10-03 — Phase 4: Production-Grade Forgot Password, OTP Reset & Session Revocation
 - **Status**: Completed & Verified (91 passing tests)

@@ -2,6 +2,8 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert");
 const {
   VALID_COUNT_MODES,
+  normalizePracticeMode,
+  validateSelectedSections,
   normalizeQuestionCountMode,
   validateSectionBatch,
   validateFollowUp
@@ -9,6 +11,32 @@ const {
 const { AiServiceClient } = require("../../src/services/aiService.client");
 
 describe("Interview Generation Contracts & Validator Unit Tests", () => {
+  describe("Topic-only practice mode", () => {
+    it("accepts selected standard and custom topics and preserves their metadata", () => {
+      const result = validateSelectedSections([
+        { id: "react", name: "React.js", category: "frontend" },
+        { id: "custom_graphql", name: "GraphQL Performance", isCustom: true }
+      ]);
+
+      assert.strictEqual(normalizePracticeMode("selected_sections"), "selected_sections");
+      assert.strictEqual(result.valid, true);
+      assert.deepStrictEqual(result.sections.map(({ id, name, isCustom }) => ({ id, name, isCustom })), [
+        { id: "react", name: "React.js", isCustom: false },
+        { id: "custom_graphql", name: "GraphQL Performance", isCustom: true }
+      ]);
+    });
+
+    it("rejects malformed selected topic entries", () => {
+      assert.strictEqual(validateSelectedSections(null).valid, false);
+      assert.strictEqual(validateSelectedSections(["   "]).valid, false);
+      assert.strictEqual(validateSelectedSections([{ id: "", name: "" }]).valid, false);
+    });
+
+    it("defaults an unknown practice mode to the comprehensive interview", () => {
+      assert.strictEqual(normalizePracticeMode("unknown"), "complete");
+    });
+  });
+
   describe("Question Count Mode Normalization", () => {
     it("should accept valid string count modes '3', '6', '10', and 'dynamic'", () => {
       assert.strictEqual(normalizeQuestionCountMode("3"), "3");

@@ -1,4 +1,6 @@
 import unittest
+from unittest.mock import patch
+from app.services.interview import graph
 from app.schemas.interview import (
     QuestionCountMode,
     BlueprintSection,
@@ -13,6 +15,26 @@ from app.schemas.interview import (
 )
 
 class TestInterviewContracts(unittest.TestCase):
+    def test_topic_only_blueprint_contains_only_selected_topics(self):
+        request = PlanBlueprintRequest(
+            role="Frontend Engineer",
+            difficulty="intermediate",
+            target_duration_minutes=30,
+            question_count_mode="6",
+            practice_mode="selected_sections",
+            selected_sections=[
+                {"id": "react", "name": "React.js"},
+                {"id": "custom_graphql", "name": "GraphQL Performance", "isCustom": True},
+            ],
+        )
+
+        with patch.object(graph, "extract_context_evidence", return_value=({}, {})):
+            blueprint = graph.plan_interview_blueprint(request)
+
+        self.assertEqual([section.id for section in blueprint.sections], ["react", "custom_graphql"])
+        self.assertEqual(sum(section.planned_primary_question_count for section in blueprint.sections), 6)
+        self.assertTrue(all(section.applicable for section in blueprint.sections))
+
     def test_question_count_mode_enum(self):
         self.assertEqual(QuestionCountMode.COUNT_3.value, "3")
         self.assertEqual(QuestionCountMode.COUNT_6.value, "6")
