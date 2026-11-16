@@ -230,6 +230,54 @@ describe("Dynamic Counts & Section Transitions Integration Tests", () => {
     assert.strictEqual(doc.plannedSectionCounts.skills, 4);
   });
 
+  it("should start a topic-only interview using only the selected custom topic", async () => {
+    let planningRequest;
+    aiServiceClient.planBlueprint = async (params) => {
+      planningRequest = params;
+      return {
+        version: 1,
+        role: params.role,
+        difficulty: params.difficulty,
+        sections: params.selectedSections.map((section) => ({
+          id: section.id,
+          type: section.id,
+          title: section.name,
+          objective: section.description,
+          planned_primary_question_count: 3,
+          applicable: true
+        }))
+      };
+    };
+
+    const selectedSections = [{
+      id: "custom_graphql_performance",
+      name: "GraphQL Performance",
+      description: "Query planning, N+1 prevention, and caching",
+      isCustom: true
+    }];
+    const res = await request("/api/interview/start", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${authToken}` },
+      body: {
+        role: "Backend Engineer",
+        level: "intermediate",
+        practiceMode: "selected_sections",
+        selectedSections,
+        questionCountMode: "3"
+      }
+    });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(planningRequest.practiceMode, "selected_sections");
+    assert.deepStrictEqual(planningRequest.selectedSections.map((section) => section.id), ["custom_graphql_performance"]);
+    assert.strictEqual(res.data.section, "custom_graphql_performance");
+
+    const session = await InterviewSession.findOne({ sessionId: res.data.sessionId });
+    assert.strictEqual(session.practiceMode, "selected_sections");
+    assert.deepStrictEqual(session.blueprint.sections.map((section) => section.id), ["custom_graphql_performance"]);
+    assert.strictEqual(session.selectedSections[0].isCustom, true);
+  });
+
   it("should present questions individually and transition seamlessly across sections", async () => {
     // Start compact 2-section interview
     aiServiceClient.planBlueprint = async (params) => ({
