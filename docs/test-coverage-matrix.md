@@ -2,6 +2,8 @@
 
 This matrix compares the revised testing PDF with the tests and tooling currently in the repository. A test file being present means automated coverage exists for that behavior; it does not mean that every variation in the PDF has been exercised or that the test passed in this environment. Run evidence belongs to a specific build and environment.
 
+Latest local run: backend unit tests reported **106 tests across 28 suites, 0 failures**; the AI service suite reported **30 tests passed**. The 30 figure is the AI service test count, not the Node suite count.
+
 ## Automated coverage
 
 | PDF area / examples | Current automated coverage | Current evidence / limitation |
@@ -19,6 +21,7 @@ This matrix compares the revised testing PDF with the tests and tooling currentl
 | Resume/JD ownership, extraction, RAG boundaries | `backend/tests/integration/ai_rag_integration.test.js` | Requires MongoDB; FastAPI/RAG integration coverage is not proof that every PDF route is deployed in the Node request path. |
 | FastAPI interview and section batch contracts | `AIService/tests/test_contracts.py`, `test_section_batch.py`, `test_followup_decision.py`, `test_count_modes.py`, `test_dynamic_counts.py` | `unittest` suite runs with deterministic fixtures and mocked LLM calls. |
 | Topic-only interview, including a custom topic | Backend validator coverage in `backend/tests/unit/interview.contracts.test.js`; route test in `backend/tests/integration/dynamic_counts_and_transitions.test.js`; AI blueprint test in `AIService/tests/test_contracts.py` | Selection validation and AI blueprint tests run without MongoDB. Route persistence test requires MongoDB. Only selected topics should appear in the blueprint. |
+| Punctuated non-answer recognition | `backend/tests/unit/interview.scoring.test.js` | Confirms short explicit non-answers with punctuation are detected and substantive answers are not. |
 | Test database records and ownership | Integration fixtures create synthetic users/sessions in test suites | There is no general-purpose seed/reset fixture script in the repository. Integration setup/cleanup is test-specific. |
 
 ## Manual or specialized checks
