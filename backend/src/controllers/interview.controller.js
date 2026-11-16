@@ -1527,7 +1527,11 @@ exports.getDashboardAnalytics = async (req, res, next) => {
         analytics: {
           totalInterviews: 0,
           completedInterviews: 0,
+          totalQuestionsAnswered: 0,
+          totalDurationMinutes: 0,
           averageScore: 0,
+          averageBenchmark: 0,
+          readinessRating: "Not Started",
           highestScore: 0,
           recentScore: 0,
           categoryAverages: {
@@ -1537,6 +1541,8 @@ exports.getDashboardAnalytics = async (req, res, next) => {
             relevance: 0,
             completeness: 0
           },
+          competencies: [],
+          recommendations: [],
           scoreHistory: [],
           recentTrends: [],
           topStrengths: [],
@@ -1550,7 +1556,7 @@ exports.getDashboardAnalytics = async (req, res, next) => {
     const highestScoreVal = Math.max(...scores);
     const recentScoreVal = scores[scores.length - 1];
 
-    // Compute category averages
+    // Compute category rubric averages
     const categoryTotals = { correctness: 0, clarity: 0, depth: 0, relevance: 0, completeness: 0 };
     completedSessions.forEach((s) => {
       const cats = s.finalReport?.categoryScores || {};
@@ -1578,20 +1584,140 @@ exports.getDashboardAnalytics = async (req, res, next) => {
     // Aggregate common strengths and weaknesses
     const allStrengths = [];
     const allAreas = [];
+    let totalQuestionsAnswered = 0;
+    let totalDurationSeconds = 0;
+    const competencyMap = new Map();
+
     completedSessions.forEach((s) => {
+      totalQuestionsAnswered += Array.isArray(s.answers) && s.answers.length > 0
+        ? s.answers.length
+        : (s.questions?.length || 0);
+
+      if (s.finalReport?.durationSeconds) {
+        totalDurationSeconds += s.finalReport.durationSeconds;
+      }
+
       (s.finalReport?.strengths || []).forEach((str) => uniquePush(allStrengths, str));
       (s.finalReport?.areasOfImprovement || []).forEach((area) => uniquePush(allAreas, area));
+
+      // 1. Group by sectionWiseEvaluations if present
+      const sectionEvals = s.finalReport?.sectionWiseEvaluations || s.sectionWiseEvaluations || s.finalReport?.sectionSummaries;
+      let handledSections = false;
+
+      if (sectionEvals && typeof sectionEvals === "object" && Object.keys(sectionEvals).length > 0) {
+        Object.entries(sectionEvals).forEach(([secId, secData]) => {
+          if (!secData) return;
+          const rawName = secData.name || secData.title || secId.replace(/_/g, " ");
+          const name = rawName.replace(/\b\w/g, (c) => c.toUpperCase());
+          const score = typeof secData.score === "number" ? secData.score : (secData.rating || 0);
+          if (score > 0) {
+            handledSections = true;
+            const existing = competencyMap.get(name) || { totalScore: 0, count: 0 };
+            existing.totalScore += score;
+            existing.count += 1;
+            competencyMap.set(name, existing);
+          }
+        });
+      }
+
+      // 2. Fallback to question categories if sectionWiseEvaluations wasn't used
+      if (!handledSections && Array.isArray(s.questions) && Array.isArray(s.evaluations)) {
+        s.questions.forEach((q, idx) => {
+          const ev = s.evaluations[idx];
+          if (!ev || typeof ev.score !== "number" || ev.score <= 0) return;
+          const catName = (q.category || q.format || "Technical Core").replace(/\b\w/g, (c) => c.toUpperCase());
+          const existing = competencyMap.get(catName) || { totalScore: 0, count: 0 };
+          existing.totalScore += ev.score;
+          existing.count += 1;
+          competencyMap.set(catName, existing);
+        });
+      }
     });
+
+    // Map competencyMap to structured competency objects
+    let competencies = [];
+    competencyMap.forEach((data, name) => {
+      const avg = data.count > 0 ? data.totalScore / data.count : 0;
+      const scorePct = Math.min(100, Math.max(0, Math.round(avg * 10)));
+      const level = scorePct >= 80 ? "Advanced" : scorePct >= 65 ? "Proficient" : "Developing";
+      const color = scorePct >= 80 ? "bg-emerald-600" : scorePct >= 65 ? "bg-indigo-600" : "bg-amber-600";
+      competencies.push({
+        name,
+        score: scorePct,
+        level,
+        color,
+        count: data.count
+      });
+    });
+
+    // Fallback if no specific topic was logged
+    if (competencies.length === 0) {
+      competencies = [
+        { name: "Technical Correctness & Accuracy", score: Math.round(categoryAverages.correctness * 10), level: categoryAverages.correctness >= 8 ? "Advanced" : categoryAverages.correctness >= 6.5 ? "Proficient" : "Developing", color: "bg-indigo-600" },
+        { name: "Communication & Clarity (STAR)", score: Math.round(categoryAverages.clarity * 10), level: categoryAverages.clarity >= 8 ? "Advanced" : categoryAverages.clarity >= 6.5 ? "Proficient" : "Developing", color: "bg-indigo-600" },
+        { name: "System Depth & Edge Case Analysis", score: Math.round(categoryAverages.depth * 10), level: categoryAverages.depth >= 8 ? "Advanced" : categoryAverages.depth >= 6.5 ? "Proficient" : "Developing", color: "bg-indigo-600" },
+        { name: "Relevance & Direct Answers", score: Math.round(categoryAverages.relevance * 10), level: categoryAverages.relevance >= 8 ? "Advanced" : categoryAverages.relevance >= 6.5 ? "Proficient" : "Developing", color: "bg-indigo-600" },
+        { name: "Completeness & Solution Scope", score: Math.round(categoryAverages.completeness * 10), level: categoryAverages.completeness >= 8 ? "Advanced" : categoryAverages.completeness >= 6.5 ? "Proficient" : "Developing", color: "bg-indigo-600" }
+      ];
+    } else {
+      competencies.sort((a, b) => b.score - a.score);
+    }
+
+    // Benchmark percentage and rating label
+    const averageBenchmark = Math.round(averageScoreVal * 10);
+    const readinessRating = averageBenchmark >= 80 ? "Interview Ready" : (averageBenchmark >= 65 ? "Proficient" : "Developing");
+
+    // Dynamic practice recommendations
+    const recommendations = [];
+    const sortedByLowest = [...competencies].sort((a, b) => a.score - b.score);
+    if (sortedByLowest.length > 0 && sortedByLowest[0].score < 80) {
+      const lowest = sortedByLowest[0];
+      recommendations.push({
+        title: `Practice ${lowest.name}`,
+        description: `Your average performance in ${lowest.name} is ${lowest.score}% (${lowest.level}). Practice targeted questions in this area to raise your overall benchmark.`,
+        actionUrl: "/customize"
+      });
+    }
+
+    const rubricEntries = [
+      { key: "depth", label: "System Depth & Trade-offs", val: categoryAverages.depth, tip: "Focus on discussing scalability trade-offs, caching strategies (Redis), message queues, and failure modes." },
+      { key: "clarity", label: "Communication & Clarity", val: categoryAverages.clarity, tip: "Structure your responses using the STAR method (Situation, Task, Action, Result) and state assumptions upfront." },
+      { key: "correctness", label: "Technical Accuracy", val: categoryAverages.correctness, tip: "Review core computer science fundamentals, syntax nuances, and algorithmic complexities." },
+      { key: "completeness", label: "Answer Completeness", val: categoryAverages.completeness, tip: "Address all sub-components of scenario questions and include validation or testing steps." }
+    ].sort((a, b) => a.val - b.val);
+
+    const weakestRubric = rubricEntries[0];
+    if (weakestRubric) {
+      recommendations.push({
+        title: `Strengthen ${weakestRubric.label}`,
+        description: weakestRubric.tip,
+        actionUrl: "/start-interview"
+      });
+    }
+
+    if (recommendations.length < 2 && allAreas.length > 0) {
+      recommendations.push({
+        title: "Focus on Improvement Area",
+        description: allAreas[0],
+        actionUrl: "/customize"
+      });
+    }
 
     res.json({
       success: true,
       analytics: {
         totalInterviews: totalCompleted,
         completedInterviews: totalCompleted,
+        totalQuestionsAnswered,
+        totalDurationMinutes: Math.round(totalDurationSeconds / 60),
         averageScore: averageScoreVal,
-        highestScore: highestScoreVal,
-        recentScore: recentScoreVal,
+        averageBenchmark,
+        readinessRating,
+        highestScore: Math.round(highestScoreVal * 10),
+        recentScore: Math.round(recentScoreVal * 10),
         categoryAverages,
+        competencies,
+        recommendations: recommendations.slice(0, 3),
         scoreHistory,
         recentTrends: scoreHistory,
         topStrengths: allStrengths.slice(0, 5),
@@ -1601,7 +1727,6 @@ exports.getDashboardAnalytics = async (req, res, next) => {
   } catch (err) {
     next(err);
   }
-
 };
 
 /**
