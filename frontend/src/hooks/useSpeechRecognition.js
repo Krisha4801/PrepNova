@@ -1,24 +1,85 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getSpeechRecognition } from '../lib/speech';
+import { createDeepgramSession } from '../lib/deepgramSpeech';
 
 /**
- * Wraps the browser SpeechRecognition API for voice dictation.
+ * Wraps Deepgram Nova-2 live WebSocket streaming with graceful browser SpeechRecognition fallback.
  *
- * @param {(transcript: string) => void} onTranscript called with the full
- *   running transcript each time the recogniser produces a result.
- * @returns {{ isRecording: boolean, toggleRecording: () => void }}
+ * @param {(transcript: string) => void} onTranscript called with the running transcript
+ * @returns {{ isRecording: boolean, toggleRecording: () => Promise<void>, resetTranscript: () => void, stopRecording: () => void, usingDeepgram: boolean }}
  */
 export default function useSpeechRecognition(onTranscript) {
   const [isRecording, setIsRecording] = useState(false);
-  const recognitionRef = useRef(null);
+  const [usingDeepgram, setUsingDeepgram] = useState(true);
+  const deepgramSessionRef = useRef(null);
+  const browserRecognitionRef = useRef(null);
   const onTranscriptRef = useRef(onTranscript);
 
-  // Always call the latest callback without re-creating the recogniser.
   useEffect(() => {
     onTranscriptRef.current = onTranscript;
   }, [onTranscript]);
 
+  const stopRecording = useCallback(() => {
+    if (deepgramSessionRef.current) {
+      try {
+        deepgramSessionRef.current.reset();
+      } catch (_) {}
+      deepgramSessionRef.current = null;
+    }
+    if (browserRecognitionRef.current) {
+      try {
+        browserRecognitionRef.current.stop();
+      } catch (_) {}
+      browserRecognitionRef.current = null;
+    }
+    setIsRecording(false);
+  }, []);
+
+  const resetTranscript = useCallback(() => {
+    stopRecording();
+  }, [stopRecording]);
+
+  // Clean up active streams on unmount
   useEffect(() => {
+    return () => {
+      stopRecording();
+    };
+  }, [stopRecording]);
+
+  const toggleRecording = useCallback(async () => {
+    if (isRecording) {
+      stopRecording();
+      return;
+    }
+
+    // 1. Primary: Deepgram Nova-2 Live Streaming over WebSocket
+    try {
+      const session = createDeepgramSession({
+        onTranscript: (liveTranscript) => {
+          onTranscriptRef.current?.(liveTranscript);
+        },
+        onError: (err) => {
+          console.warn('Deepgram session error:', err);
+        },
+        onStart: () => {
+          setIsRecording(true);
+          setUsingDeepgram(true);
+        },
+        onStop: () => {
+          setIsRecording(false);
+        }
+      });
+
+      const started = await session.start();
+      if (started) {
+        deepgramSessionRef.current = session;
+        return;
+      }
+    } catch (dgErr) {
+      console.warn('Deepgram connection failed, attempting browser speech fallback:', dgErr);
+    }
+
+    // 2. Fallback: Browser native SpeechRecognition
     const SpeechRecognition = getSpeechRecognition();
     if (SpeechRecognition) {
       try {
@@ -28,40 +89,38 @@ export default function useSpeechRecognition(onTranscript) {
         recognition.lang = 'en-US';
 
         recognition.onresult = (event) => {
-          let transcript = '';
+          let live = '';
           for (let i = 0; i < event.results.length; i++) {
-            transcript += event.results[i][0].transcript;
+            live += event.results[i][0].transcript;
           }
-          onTranscriptRef.current?.(transcript);
+          onTranscriptRef.current?.(live.trim());
         };
 
-        recognition.onerror = (err) => {
-          console.warn('Speech recognition notice:', err.error);
+        recognition.onstart = () => {
+          setIsRecording(true);
+          setUsingDeepgram(false);
         };
 
-        recognitionRef.current = recognition;
-      } catch (e) {
-        console.warn('Speech recognition initialization skipped:', e);
+        recognition.onend = () => {
+          setIsRecording(false);
+        };
+
+        recognition.onerror = (e) => {
+          console.warn('Browser speech recognition notice:', e.error);
+          setIsRecording(false);
+        };
+
+        browserRecognitionRef.current = recognition;
+        recognition.start();
+      } catch (browserErr) {
+        console.warn('Browser speech recognition failed:', browserErr);
+        setIsRecording(false);
       }
-    }
-
-    return () => {
-      try { recognitionRef.current?.stop(); } catch (_) { /* already stopped */ }
-    };
-  }, []);
-
-  const toggleRecording = useCallback(() => {
-    const recognition = recognitionRef.current;
-    if (!recognition) return;
-
-    if (isRecording) {
-      try { recognition.stop(); } catch (_) { /* already stopped */ }
-      setIsRecording(false);
     } else {
-      try { recognition.start(); } catch (_) { /* already started */ }
-      setIsRecording(true);
+      console.warn('Neither Deepgram nor browser SpeechRecognition is available.');
+      setIsRecording(false);
     }
-  }, [isRecording]);
+  }, [isRecording, stopRecording]);
 
-  return { isRecording, toggleRecording };
+  return { isRecording, toggleRecording, resetTranscript, stopRecording, usingDeepgram };
 }
