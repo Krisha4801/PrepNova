@@ -1,4 +1,6 @@
-# PrepNova: Free-Tier Production Deployment & Operations Guide
+# PrepNova: Legacy Deployment Guide (Render and Hugging Face)
+
+> This guide documents an earlier Render/Hugging Face target. For the current Vercel frontend/backend and AWS AI target, use [VERCEL_DEPLOYMENT_GUIDE.md](VERCEL_DEPLOYMENT_GUIDE.md).
 
 This document defines the production deployment architecture, configuration, and verification steps for PrepNova using free-tier cloud infrastructure.
 

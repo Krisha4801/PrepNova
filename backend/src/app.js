@@ -1,7 +1,52 @@
 const express = require("express");
 const cors = require("cors");
+const mongoose = require("mongoose");
+const connectDB = require("./config/db");
 
 const app = express();
+let databaseConnectionPromise = null;
+const isVercelDeployment = process.env.VERCEL === "1";
+
+async function ensureDatabaseConnection(req, res, next) {
+  if (mongoose.connection.readyState === 1) {
+    return next();
+  }
+
+  if ((process.env.NODE_ENV === "production" || isVercelDeployment) && !process.env.MONGO_URI) {
+    return res.status(503).json({
+      success: false,
+      error: "Database is not configured. Set MONGO_URI in the deployment environment."
+    });
+  }
+
+  try {
+    if (mongoose.connection.readyState === 2) {
+      await mongoose.connection.asPromise();
+    } else {
+      if (!databaseConnectionPromise) {
+        databaseConnectionPromise = connectDB().finally(() => {
+          databaseConnectionPromise = null;
+        });
+      }
+      await databaseConnectionPromise;
+    }
+
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({
+        success: false,
+        error: "Database is temporarily unavailable. Please try again shortly."
+      });
+    }
+
+    return next();
+  } catch (error) {
+    console.error("[Database] Request connection failed:", error.message);
+    return res.status(503).json({
+      success: false,
+      error: "Database is temporarily unavailable. Please try again shortly."
+    });
+  }
+}
 
 // Configure CORS
 const configuredOrigins = process.env.FRONTEND_URL
@@ -26,8 +71,7 @@ app.use(
 app.use(express.json());
 
 // Public healthcheck
-app.get("/health", (req, res) => {
-  const mongoose = require("mongoose");
+app.get("/health", ensureDatabaseConnection, (req, res) => {
   const isDbConnected = mongoose.connection.readyState === 1;
   res.status(isDbConnected ? 200 : 503).json({
     status: isDbConnected ? "ok" : "degraded",
@@ -42,6 +86,7 @@ app.get("/test", (req, res) => {
 });
 
 // App Routes
+app.use("/api", ensureDatabaseConnection);
 app.use("/api/auth", require("./routes/auth.routes"));
 app.use("/api/interview", require("./routes/interview.routes"));
 app.use("/api/resume", require("./routes/resume.routes"));

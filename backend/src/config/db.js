@@ -10,6 +10,11 @@ function sanitizeUri(uri) {
 }
 
 const connectDB = async () => {
+  if ((process.env.NODE_ENV === "production" || process.env.VERCEL === "1") && !process.env.MONGO_URI) {
+    console.warn("[Database] MONGO_URI is required in production; skipping local database fallback.");
+    return;
+  }
+
   const primaryUri = process.env.MONGO_URI || "mongodb://127.0.0.1:27017/prepnova";
   const localFallbackUri = "mongodb://127.0.0.1:27017/prepnova";
 
@@ -34,7 +39,7 @@ const connectDB = async () => {
     console.warn(`[Database] Primary MongoDB connection failed (${sanitizeUri(primaryUri)}): ${error.message}`);
 
     // If primary was a remote cluster and failed, automatically try local MongoDB fallback
-    if (primaryUri !== localFallbackUri) {
+    if (primaryUri !== localFallbackUri && process.env.NODE_ENV !== "production" && process.env.VERCEL !== "1") {
       console.log(`[Database] Attempting connection to local MongoDB fallback (${localFallbackUri})...`);
       try {
         await mongoose.connect(localFallbackUri, {
