@@ -27,6 +27,7 @@ export const API_ENDPOINTS = {
   INTERVIEW_REPORT: (sessionId) => `${API_BASE_URL}/api/interview/${encodeURIComponent(sessionId)}/report`,
   INTERVIEW_RETRY_REPORT: (sessionId) => `${API_BASE_URL}/api/interview/${encodeURIComponent(sessionId)}/retry-report`,
   INTERVIEW_PDF: (sessionId) => `${API_BASE_URL}/api/interview/${encodeURIComponent(sessionId)}/pdf`,
+  INTERVIEW_VOICE_TOKEN: `${API_BASE_URL}/api/interview/voice-token`,
   INTERVIEW_VALIDATE: `${API_BASE_URL}/api/interview/validate`,
   INTERVIEW_FIT_CHECK: `${API_BASE_URL}/api/interview/fit-check`,
   RESUMES: `${API_BASE_URL}/api/resumes`,
@@ -314,6 +315,12 @@ export async function retryInterviewReportApi(sessionId) {
 
 export function getInterviewPdfUrl(sessionId) {
   return API_ENDPOINTS.INTERVIEW_PDF(sessionId);
+}
+
+export async function getDeepgramVoiceTokenApi() {
+  return await apiFetch(API_ENDPOINTS.INTERVIEW_VOICE_TOKEN, {
+    method: "GET"
+  });
 }
 
 // -------------------------------------------------------------

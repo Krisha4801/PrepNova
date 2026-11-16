@@ -1965,3 +1965,28 @@ exports.getActiveSession = async (req, res, next) => {
   }
 };
 
+/**
+ * GET DEEPGRAM VOICE TOKEN
+ * Supplies authentication token for live streaming speech-to-text.
+ * GET /api/interview/voice-token
+ */
+exports.getDeepgramVoiceToken = async (req, res, next) => {
+  try {
+    const apiKey = process.env.DEEPGRAM_API_KEY;
+    if (!apiKey) {
+      return res.status(503).json({
+        success: false,
+        error: "Deepgram voice service is not configured on the server."
+      });
+    }
+
+    return res.json({
+      success: true,
+      key: apiKey
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+
