@@ -637,7 +637,8 @@ function countDepthCues(answer) {
 
 function isLowEffortAnswer(answer, wordCount) {
   const trimmed = String(answer || "").trim();
-  return wordCount < 3 || LOW_EFFORT_PATTERNS.some((pattern) => pattern.test(trimmed));
+  const normalized = trimmed.replace(/[.!?,;:]+$/g, "").trim();
+  return wordCount < 3 || LOW_EFFORT_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
 function answerTargetWordCount(questionRecord) {
@@ -811,6 +812,7 @@ module.exports = {
   LEVELS,
   findQuestion,
   evaluateAnswerLocally,
+  isLowEffortAnswer,
   getAvailableRoles,
   normalizeLevel,
   resolveRole
