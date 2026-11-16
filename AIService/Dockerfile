@@ -25,12 +25,17 @@ WORKDIR $HOME/app
 # Install CPU-only PyTorch to keep memory footprint under limits
 RUN pip install --no-cache-dir --user --index-url https://download.pytorch.org/whl/cpu torch
 
-# Install application dependencies
+# Install application dependencies with CPU wheel fallback
 COPY --chown=user:user requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+RUN pip install --no-cache-dir --user --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt
 
 # Copy application source code
 COPY --chown=user:user . .
+
+# Pre-cache embedding model weights and pre-seed role knowledge during build
+# This eliminates runtime network downloads and ensures sub-second container startup
+RUN python -c "from langchain_huggingface import HuggingFaceEmbeddings; HuggingFaceEmbeddings(model_name='BAAI/bge-small-en-v1.5', model_kwargs={'device': 'cpu'})" \
+    && python -c "from app.services.role_knowledge.seed import seed_role_knowledge; seed_role_knowledge()"
 
 # Expose Hugging Face default container port
 EXPOSE 7860
