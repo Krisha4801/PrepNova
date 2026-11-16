@@ -59,9 +59,14 @@ class AiServiceClient {
   constructor(baseURL = null, timeout = null) {
     this.baseURL = baseURL || getAiServiceBaseUrl();
     this.timeout = timeout || getAiServiceTimeout();
+    const headers = {};
+    if (process.env.AI_SERVICE_API_KEY) {
+      headers["X-AI-Service-Key"] = process.env.AI_SERVICE_API_KEY;
+    }
     this.httpClient = axios.create({
       baseURL: this.baseURL,
-      timeout: this.timeout
+      timeout: this.timeout,
+      headers
     });
   }
 
@@ -210,6 +215,62 @@ class AiServiceClient {
       return response.data;
     } catch (err) {
       throw normalizeAiServiceError(err, "Document deletion");
+    }
+  }
+
+  /**
+   * Check whether a document's vector chunks exist in ChromaDB
+   * @param {Object} params - { userId, documentId, documentType }
+   */
+  async checkDocumentStatus({ userId, documentId, documentType = "resume" }) {
+    if (!userId || !documentId) {
+      const err = new Error("userId and documentId are required to check document status.");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    try {
+      const response = await this.httpClient.get("/rag/document-status", {
+        params: {
+          user_id: String(userId),
+          document_id: String(documentId),
+          document_type: documentType
+        }
+      });
+      return response.data;
+    } catch (err) {
+      throw normalizeAiServiceError(err, "Document status check");
+    }
+  }
+
+  /**
+   * Idempotently rehydrate ChromaDB with pre-computed chunks and embeddings from MongoDB
+   * @param {Object} params - { userId, documentId, documentType, chunks }
+   */
+  async rehydrateDocument({ userId, documentId, documentType = "resume", chunks = [] }) {
+    if (!userId || !documentId || !Array.isArray(chunks) || chunks.length === 0) {
+      const err = new Error("userId, documentId, and non-empty chunks array are required for rehydration.");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    try {
+      const response = await this.httpClient.post("/rag/rehydrate", {
+        user_id: String(userId),
+        document_id: String(documentId),
+        document_type: documentType,
+        chunks: chunks.map((c) => ({
+          chunk_id: c.chunkId || c.chunk_id,
+          chunk_index: c.chunkIndex ?? c.chunk_index ?? 0,
+          content: c.content,
+          section: c.section || "general",
+          embedding: c.embedding,
+          metadata: c.metadata || {}
+        }))
+      });
+      return response.data;
+    } catch (err) {
+      throw normalizeAiServiceError(err, "Document rehydration");
     }
   }
 

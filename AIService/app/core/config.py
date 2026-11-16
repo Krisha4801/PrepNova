@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     groq_api_key: str | None = None
     groq_model: str = "openai/gpt-oss-120b"
     tesseract_cmd: str | None = None
+    ai_service_api_key: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=(".env", "../backend/.env"),

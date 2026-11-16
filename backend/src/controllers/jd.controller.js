@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const mongoose = require("mongoose");
 const JobDescription = require("../models/JobDescription");
+const DocumentChunk = require("../models/DocumentChunk");
 const { aiServiceClient } = require("../services/aiService.client");
 
 /**
@@ -64,6 +65,35 @@ exports.extractAndIndexJd = async (req, res, next) => {
       indexedInChroma: !!aiResult.indexed,
       chunksCount: aiResult.chunks_count || 0
     });
+
+    // Durably persist JD chunks in DocumentChunk collection
+    if (Array.isArray(aiResult.chunks) && aiResult.chunks.length > 0) {
+      const chunkOps = aiResult.chunks.map((c, idx) => ({
+        updateOne: {
+          filter: {
+            userId,
+            documentType: "jd",
+            documentId,
+            chunkIndex: c.chunk_index ?? idx
+          },
+          update: {
+            $set: {
+              userId,
+              documentType: "jd",
+              documentId,
+              chunkIndex: c.chunk_index ?? idx,
+              chunkId: c.chunk_id || `jd:${userId}:${documentId}:${c.chunk_index ?? idx}`,
+              content: c.content,
+              section: c.section || "general",
+              embedding: c.embedding || [],
+              metadata: c.metadata || {}
+            }
+          },
+          upsert: true
+        }
+      }));
+      await DocumentChunk.bulkWrite(chunkOps);
+    }
 
     res.status(201).json({
       success: true,
@@ -168,10 +198,80 @@ exports.deleteJd = async (req, res, next) => {
     }
 
     await JobDescription.deleteOne({ _id: jd._id });
+    await DocumentChunk.deleteMany({ userId, documentId });
 
     res.json({
       success: true,
       message: "Job description and associated vector embeddings deleted successfully."
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Idempotently rehydrate JD vector chunks in ChromaDB from MongoDB DocumentChunk collection.
+ * POST /api/jd/:documentId/rehydrate
+ */
+exports.rehydrateJobDescription = async (req, res, next) => {
+  try {
+    const userId = req.user ? String(req.user._id || req.user.id) : null;
+    const { documentId } = req.params;
+
+    const query = mongoose.Types.ObjectId.isValid(documentId)
+      ? { $or: [{ documentId }, { _id: documentId }] }
+      : { documentId };
+
+    const jd = await JobDescription.findOne(query);
+    if (!jd) {
+      return res.status(404).json({
+        success: false,
+        error: "Job description not found."
+      });
+    }
+
+    // Strict user ownership check
+    if (String(jd.userId) !== userId) {
+      return res.status(403).json({
+        success: false,
+        error: "Access denied. You do not own this document."
+      });
+    }
+
+    const chunks = await DocumentChunk.find({
+      userId,
+      documentId: jd.documentId,
+      documentType: "jd"
+    }).sort({ chunkIndex: 1 });
+
+    if (!chunks || chunks.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: "No stored vector chunks found for this job description to rehydrate."
+      });
+    }
+
+    const rehydrateResult = await aiServiceClient.rehydrateDocument({
+      userId,
+      documentId: jd.documentId,
+      documentType: "jd",
+      chunks: chunks.map(c => ({
+        chunkId: c.chunkId,
+        chunkIndex: c.chunkIndex,
+        content: c.content,
+        section: c.section,
+        embedding: c.embedding,
+        metadata: c.metadata
+      }))
+    });
+
+    jd.indexedInChroma = true;
+    await jd.save();
+
+    res.json({
+      success: true,
+      message: "Job description vector index successfully rehydrated in ChromaDB.",
+      rehydratedChunksCount: rehydrateResult.rehydrated_chunks_count || chunks.length
     });
   } catch (err) {
     next(err);

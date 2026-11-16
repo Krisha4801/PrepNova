@@ -1,0 +1,411 @@
+openapi: 3.0.3
+info:
+  title: PrepNova REST API
+  description: Complete and verified OpenAPI 3.0.3 Specification for PrepNova - RAG-based Adaptive Mock Interview Platform.
+  version: 1.0.0
+servers:
+  - url: http://localhost:5000/api
+    description: Local Express Backend
+  - url: https://prepnova-api.onrender.com/api
+    description: Production Cloud API
+
+paths:
+  /auth/register:
+    post:
+      summary: Register candidate account
+      tags: [Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name: { type: string, example: "Jaimin Trivedi" }
+                email: { type: string, format: email, example: "jaimin@example.com" }
+                password: { type: string, minLength: 6, example: "Password123!" }
+      responses:
+        '201':
+          description: User registered and JWT returned
+        '400':
+          description: Validation error or weak password
+
+  /auth/login:
+    post:
+      summary: Authenticate candidate & obtain JWT
+      tags: [Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200':
+          description: Successful authentication
+        '401':
+          description: Invalid credentials
+
+  /auth/me:
+    get:
+      summary: Get active authenticated profile
+      tags: [Authentication]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Current user record
+
+  /auth/profile:
+    put:
+      summary: Update candidate profile
+      tags: [Authentication]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                targetRole: { type: string }
+                experienceLevel: { type: string }
+                bio: { type: string }
+      responses:
+        '200':
+          description: Profile updated
+
+  /auth/logout:
+    post:
+      summary: Invalidate active JWT token on server
+      tags: [Authentication]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Logged out successfully
+
+  /auth/forgot-password:
+    post:
+      summary: Request 6-digit password reset OTP email
+      tags: [Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '200':
+          description: OTP dispatched
+
+  /auth/verify-reset-otp:
+    post:
+      summary: Verify OTP and receive signed resetToken
+      tags: [Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, otp]
+              properties:
+                email: { type: string }
+                otp: { type: string, minLength: 6, maxLength: 6 }
+      responses:
+        '200':
+          description: OTP verified, resetToken returned
+
+  /auth/reset-password:
+    post:
+      summary: Set new password using resetToken
+      tags: [Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resetToken, newPassword]
+              properties:
+                resetToken: { type: string }
+                newPassword: { type: string, minLength: 6 }
+      responses:
+        '200':
+          description: Password reset successfully
+
+  /resume/upload:
+    post:
+      summary: Upload, parse & index candidate PDF resume
+      tags: [Resumes]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [resume]
+              properties:
+                resume: { type: string, format: binary }
+      responses:
+        '201':
+          description: Resume parsed, indexed in Chroma, stored in MongoDB
+
+  /resume/my:
+    get:
+      summary: List all resumes owned by current user
+      tags: [Resumes]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of resumes
+
+  /resume/{documentId}:
+    get:
+      summary: Get resume details by documentId
+      tags: [Resumes]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: documentId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Resume document
+        '403':
+          description: Access denied (tenant isolation)
+    delete:
+      summary: Delete resume and remove vectors
+      tags: [Resumes]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: documentId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Deleted
+
+  /jd/extract:
+    post:
+      summary: Extract and index job description from PDF or plain text
+      tags: [Job Descriptions]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text: { type: string }
+                jobTitle: { type: string }
+                company: { type: string }
+      responses:
+        '201':
+          description: JD extracted and indexed
+
+  /jd/my:
+    get:
+      summary: List JDs owned by user
+      tags: [Job Descriptions]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of JDs
+
+  /interview/start:
+    post:
+      summary: Initialize mock interview session (Complete or Selected Sections)
+      tags: [Interview]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role: { type: string }
+                level: { type: string, enum: [beginner, intermediate, advanced] }
+                mode: { type: string, enum: [resume, role, resume_jd, role_jd] }
+                practiceMode: { type: string, enum: [complete, selected_sections] }
+                selectedSections: { type: array, items: { type: object } }
+                maxQuestions: { type: integer, default: 6 }
+                resumeId: { type: string }
+                jdId: { type: string }
+      responses:
+        '200':
+          description: Interview session initialized
+        '400':
+          description: Rejection when no resume and no role provided
+
+  /interview/followup:
+    post:
+      summary: Submit candidate answer & evaluate turn against 5-part rubric
+      tags: [Interview]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sessionId, answer]
+              properties:
+                sessionId: { type: string }
+                answer: { type: string }
+                audioUsed: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Turn evaluated, adaptive difficulty calibrated, next question returned
+
+  /interview/skip:
+    post:
+      summary: Skip question turn without penalty
+      tags: [Interview]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sessionId]
+              properties:
+                sessionId: { type: string }
+      responses:
+        '200':
+          description: Skipped turn logged, next question returned
+
+  /interview/{sessionId}/active:
+    get:
+      summary: Fetch active session state and section metadata
+      tags: [Interview]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Live session state
+
+  /interview/{sessionId}/report:
+    get:
+      summary: Fetch scorecard report and section breakdown
+      tags: [Interview]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Full scorecard report
+
+  /interview/history:
+    get:
+      summary: Paginated interview history with mode filtering
+      tags: [Interview]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 10 }
+        - name: practiceMode
+          in: query
+          schema: { type: string, enum: [all, complete, selected_sections] }
+      responses:
+        '200':
+          description: List of historical interviews
+
+  /interview/analytics:
+    get:
+      summary: Candidate readiness statistics and rubric radar metrics
+      tags: [Interview]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Aggregated candidate readiness metrics
+
+  /rag/search/user:
+    post:
+      summary: User-scoped similarity search in ChromaDB
+      tags: [RAG]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, query]
+              properties:
+                user_id: { type: string }
+                query: { type: string }
+                document_id: { type: string }
+                top_k: { type: integer, default: 5 }
+      responses:
+        '200':
+          description: Search results
+
+  /rag/search/role:
+    post:
+      summary: Role knowledge similarity search in prepnova_role_kb
+      tags: [RAG]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role, query]
+              properties:
+                role: { type: string }
+                query: { type: string }
+                top_k: { type: integer, default: 5 }
+      responses:
+        '200':
+          description: Curated role knowledge results
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

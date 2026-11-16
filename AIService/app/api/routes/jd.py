@@ -83,16 +83,18 @@ async def extract_jd(
     # Index into ChromaDB if requested
     indexed = False
     chunks_count = 0
+    computed_chunks = []
     doc_id = document_id or str(uuid.uuid4())
 
     if index_document and user_id:
         documents = jd_to_documents(result)
         if documents:
             store = ChromaStore()
-            store.add_documents(
+            computed_chunks = store.add_documents(
                 documents=documents,
                 user_id=user_id,
                 document_id=doc_id,
+                document_type="jd",
             )
             indexed = True
             chunks_count = len(documents)
@@ -102,6 +104,7 @@ async def extract_jd(
         "jd": result.model_dump() if hasattr(result, "model_dump") else result,
         "indexed": indexed,
         "chunks_count": chunks_count,
+        "chunks": computed_chunks,
         "document_id": doc_id if indexed else document_id,
         "user_id": user_id
     }

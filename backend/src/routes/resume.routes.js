@@ -5,7 +5,8 @@ const {
   extractAndIndexResume,
   getMyResumes,
   getResumeById,
-  deleteResume
+  deleteResume,
+  rehydrateResume
 } = require("../controllers/resume.controller");
 
 const router = express.Router();
@@ -34,6 +35,9 @@ router.post("/upload", resumeUploadMiddleware, extractAndIndexResume);
 // Retrieve resumes
 router.get("/my", getMyResumes);
 router.get("/:documentId", getResumeById);
+
+// Rehydrate resume in ChromaDB
+router.post("/:documentId/rehydrate", rehydrateResume);
 
 // Delete resume
 router.delete("/:documentId", deleteResume);

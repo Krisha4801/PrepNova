@@ -16,6 +16,20 @@ class DeleteDocumentRequest(BaseModel):
     user_id: str = Field(..., description="Authenticated user ID")
     document_id: str = Field(..., description="Document ID to delete")
 
+class RehydrateChunkItem(BaseModel):
+    chunk_id: Optional[str] = None
+    chunk_index: int = 0
+    content: str
+    section: Optional[str] = "general"
+    embedding: List[float] = Field(..., description="384-dimensional normalized vector embedding")
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+class RehydrateRequest(BaseModel):
+    user_id: str = Field(..., description="Authenticated user ID")
+    document_id: str = Field(..., description="Target document ID")
+    document_type: str = Field("resume", description="'resume' or 'jd'")
+    chunks: List[RehydrateChunkItem] = Field(..., min_length=1, description="List of durable chunks with pre-computed embeddings")
+
 class SearchResultItem(BaseModel):
     content: str
     metadata: Dict[str, Any] = Field(default_factory=dict)

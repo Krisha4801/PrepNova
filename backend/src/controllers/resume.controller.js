@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const mongoose = require("mongoose");
 const Resume = require("../models/Resume");
+const DocumentChunk = require("../models/DocumentChunk");
 const { aiServiceClient } = require("../services/aiService.client");
 
 /**
@@ -70,6 +71,35 @@ exports.extractAndIndexResume = async (req, res, next) => {
       indexedInChroma: !!aiResult.indexed,
       chunksCount: aiResult.chunks_count || 0
     });
+
+    // Durably persist document chunks & embeddings in DocumentChunk collection
+    if (Array.isArray(aiResult.chunks) && aiResult.chunks.length > 0) {
+      const chunkOps = aiResult.chunks.map((c, idx) => ({
+        updateOne: {
+          filter: {
+            userId,
+            documentType: "resume",
+            documentId,
+            chunkIndex: c.chunk_index ?? idx
+          },
+          update: {
+            $set: {
+              userId,
+              documentType: "resume",
+              documentId,
+              chunkIndex: c.chunk_index ?? idx,
+              chunkId: c.chunk_id || `resume:${userId}:${documentId}:${c.chunk_index ?? idx}`,
+              content: c.content,
+              section: c.section || "general",
+              embedding: c.embedding || [],
+              metadata: c.metadata || {}
+            }
+          },
+          upsert: true
+        }
+      }));
+      await DocumentChunk.bulkWrite(chunkOps);
+    }
 
     res.status(201).json({
       success: true,
@@ -266,10 +296,80 @@ exports.deleteResume = async (req, res, next) => {
     }
 
     await Resume.deleteOne({ _id: resume._id });
+    await DocumentChunk.deleteMany({ userId, documentId });
 
     res.json({
       success: true,
       message: "Resume and associated vector embeddings deleted successfully."
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Idempotently rehydrate resume vector chunks in ChromaDB from MongoDB DocumentChunk collection.
+ * POST /api/resume/:documentId/rehydrate
+ */
+exports.rehydrateResume = async (req, res, next) => {
+  try {
+    const userId = req.user ? String(req.user._id || req.user.id) : null;
+    const { documentId } = req.params;
+
+    const query = mongoose.Types.ObjectId.isValid(documentId)
+      ? { $or: [{ documentId }, { _id: documentId }] }
+      : { documentId };
+
+    const resume = await Resume.findOne(query);
+    if (!resume) {
+      return res.status(404).json({
+        success: false,
+        error: "Resume not found."
+      });
+    }
+
+    // Strict user ownership check
+    if (String(resume.userId) !== userId) {
+      return res.status(403).json({
+        success: false,
+        error: "Access denied. You do not own this document."
+      });
+    }
+
+    const chunks = await DocumentChunk.find({
+      userId,
+      documentId: resume.documentId,
+      documentType: "resume"
+    }).sort({ chunkIndex: 1 });
+
+    if (!chunks || chunks.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: "No stored vector chunks found for this resume to rehydrate."
+      });
+    }
+
+    const rehydrateResult = await aiServiceClient.rehydrateDocument({
+      userId,
+      documentId: resume.documentId,
+      documentType: "resume",
+      chunks: chunks.map(c => ({
+        chunkId: c.chunkId,
+        chunkIndex: c.chunkIndex,
+        content: c.content,
+        section: c.section,
+        embedding: c.embedding,
+        metadata: c.metadata
+      }))
+    });
+
+    resume.indexedInChroma = true;
+    await resume.save();
+
+    res.json({
+      success: true,
+      message: "Resume vector index successfully rehydrated in ChromaDB.",
+      rehydratedChunksCount: rehydrateResult.rehydrated_chunks_count || chunks.length
     });
   } catch (err) {
     next(err);

@@ -5,7 +5,8 @@ const {
   extractAndIndexJd,
   getMyJds,
   getJdById,
-  deleteJd
+  deleteJd,
+  rehydrateJobDescription
 } = require("../controllers/jd.controller");
 
 const router = express.Router();
@@ -34,6 +35,9 @@ router.post("/upload", jdUploadMiddleware, extractAndIndexJd);
 // Retrieve JDs
 router.get("/my", getMyJds);
 router.get("/:documentId", getJdById);
+
+// Rehydrate JD in ChromaDB
+router.post("/:documentId/rehydrate", rehydrateJobDescription);
 
 // Delete JD
 router.delete("/:documentId", deleteJd);

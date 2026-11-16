@@ -26,6 +26,17 @@ app.use(
 app.use(express.json());
 
 // Public healthcheck
+app.get("/health", (req, res) => {
+  const mongoose = require("mongoose");
+  const isDbConnected = mongoose.connection.readyState === 1;
+  res.status(isDbConnected ? 200 : 503).json({
+    status: isDbConnected ? "ok" : "degraded",
+    service: "prepnova-express-backend",
+    database: isDbConnected ? "connected" : "disconnected",
+    timestamp: new Date().toISOString()
+  });
+});
+
 app.get("/test", (req, res) => {
   res.send("Backend working");
 });
