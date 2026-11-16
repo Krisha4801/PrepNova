@@ -10,7 +10,8 @@ const {
   downloadPdfReport,
   retryReport,
   validateInputs,
-  getActiveSession
+  getActiveSession,
+  getDeepgramVoiceToken
 } = require("../controllers/interview.controller");
 const { authenticateToken } = require("../middleware/auth.middleware");
 
@@ -26,6 +27,7 @@ router.post("/followup", followup);
 router.post("/skip", skipQuestion);
 router.post("/end", endInterview);
 router.post("/:sessionId/retry-report", retryReport);
+router.get("/voice-token", getDeepgramVoiceToken);
 router.get("/history", getInterviewHistory);
 router.get("/analytics", getDashboardAnalytics);
 router.get("/dashboard-analytics", getDashboardAnalytics);
