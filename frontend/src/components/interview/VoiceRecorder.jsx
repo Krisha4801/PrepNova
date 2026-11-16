@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   Volume2
 } from 'lucide-react';
+import { createDeepgramSession } from '../../lib/deepgramSpeech';
 
 export default function VoiceRecorder({
   isAiSpeaking = false,
@@ -20,6 +21,13 @@ export default function VoiceRecorder({
   const [transcript, setTranscript] = useState('');
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const recognitionRef = useRef(null);
+  const deepgramSessionRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      try { deepgramSessionRef.current?.stop(); } catch (_) {}
+    };
+  }, []);
 
   // Setup Web Speech Recognition if available in the browser
   useEffect(() => {
@@ -71,19 +79,47 @@ export default function VoiceRecorder({
     }
   };
 
-  const startRecording = () => {
+  const startRecording = async () => {
     setIsRecording(true);
     setTranscript('');
+
+    // Attempt 1: Deepgram Nova-2 Live Streaming
+    try {
+      const session = createDeepgramSession({
+        onTranscript: (liveTranscript) => {
+          setTranscript(liveTranscript);
+        },
+        onError: (err) => {
+          console.warn('Deepgram VoiceRecorder error:', err);
+        },
+        onStop: () => {
+          setIsRecording(false);
+        }
+      });
+
+      const started = await session.start('');
+      if (started) {
+        deepgramSessionRef.current = session;
+        return;
+      }
+    } catch (e) {
+      console.warn('Deepgram start failed in VoiceRecorder, falling back:', e);
+    }
+
+    // Attempt 2: Browser SpeechRecognition fallback
     try {
       recognitionRef.current?.start();
     } catch (e) {
-      // Fallback: If microphone permission or Speech API fails, simulate live speech transcript
       simulateSpeechInput();
     }
   };
 
   const stopRecording = () => {
     setIsRecording(false);
+    if (deepgramSessionRef.current) {
+      try { deepgramSessionRef.current.stop(); } catch (_) {}
+      deepgramSessionRef.current = null;
+    }
     try {
       recognitionRef.current?.stop();
     } catch (e) {

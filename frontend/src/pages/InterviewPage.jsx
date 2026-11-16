@@ -31,7 +31,7 @@ export default function InterviewPage() {
   const [showEndModal, setShowEndModal] = useState(false);
   const [actionError, setActionError] = useState('');
 
-  const { isRecording, toggleRecording } = useSpeechRecognition(setTextAnswer);
+  const { isRecording, toggleRecording, resetTranscript, stopRecording } = useSpeechRecognition(setTextAnswer);
 
   const {
     currentQuestionIdx,
@@ -76,16 +76,30 @@ export default function InterviewPage() {
 
   React.useEffect(() => setActionError(sessionActionError), [sessionActionError]);
 
+  // When moving to the next question, terminate any ongoing voice stream and clean input
+  React.useEffect(() => {
+    resetTranscript();
+    setTextAnswer('');
+  }, [currentQuestionIdx, resetTranscript]);
+
   const handleSkip = async () => {
-    if (await skipQuestion()) setTextAnswer('');
+    stopRecording();
+    if (await skipQuestion()) {
+      resetTranscript();
+      setTextAnswer('');
+    }
   };
 
   const handleSubmit = async (e) => {
     if (e) e.preventDefault();
+    stopRecording();
     const answer = textAnswer.trim();
     if (!answer) return;
 
-    if (await submitAnswer(answer)) setTextAnswer('');
+    if (await submitAnswer(answer)) {
+      resetTranscript();
+      setTextAnswer('');
+    }
   };
 
   return (

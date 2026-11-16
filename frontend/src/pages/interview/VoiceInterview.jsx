@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import InterviewHeader from '../../components/interview/InterviewHeader';
 import { useAuth } from '../../context/AuthContext';
+import { createDeepgramSession } from '../../lib/deepgramSpeech';
 import { 
   INTERVIEW_TOTAL_SECONDS, 
   getStageForTime, 
@@ -99,7 +100,20 @@ export default function VoiceInterview() {
   const [transcript, setTranscript] = useState('');
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const recognitionRef = useRef(null);
+  const deepgramSessionRef = useRef(null);
   const speechSimTimerRef = useRef(null);
+
+  // Clean up Deepgram session on unmount or question change
+  useEffect(() => {
+    return () => {
+      try { deepgramSessionRef.current?.stop(); } catch (_) {}
+    };
+  }, []);
+
+  useEffect(() => {
+    stopRecording();
+    setTranscript('');
+  }, [currentQuestion]);
 
   // Initialize Opening Question once loading finishes
   useEffect(() => {
@@ -191,7 +205,7 @@ export default function VoiceInterview() {
   }, [isRecording]);
 
   // 7. Start & Stop Voice Recording Handlers
-  const startRecording = () => {
+  const startRecording = async () => {
     // Silence AI if still speaking
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
@@ -200,16 +214,45 @@ export default function VoiceInterview() {
     setIsRecording(true);
     setTranscript('');
 
+    // Attempt 1: Deepgram Nova-2 Live WebSocket Streaming
+    try {
+      const session = createDeepgramSession({
+        onTranscript: (liveTranscript) => {
+          setTranscript(liveTranscript);
+        },
+        onError: (err) => {
+          console.warn('Deepgram VoiceInterview error:', err);
+        },
+        onStop: () => {
+          setIsRecording(false);
+        }
+      });
+
+      const started = await session.start('');
+      if (started) {
+        deepgramSessionRef.current = session;
+        return;
+      }
+    } catch (dgErr) {
+      console.warn('Deepgram session start failed, falling back to browser speech:', dgErr);
+    }
+
+    // Attempt 2: Browser SpeechRecognition fallback
     try {
       recognitionRef.current?.start();
     } catch {
-      // Graceful fallback simulation if microphone access or browser API is restricted
       simulateLiveSpeechInput();
     }
   };
 
   const stopRecording = () => {
     setIsRecording(false);
+    if (deepgramSessionRef.current) {
+      try {
+        deepgramSessionRef.current.stop();
+      } catch (_) {}
+      deepgramSessionRef.current = null;
+    }
     if (speechSimTimerRef.current) {
       clearInterval(speechSimTimerRef.current);
     }
